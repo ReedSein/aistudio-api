@@ -318,6 +318,7 @@ async def spa_navigation_middleware(request: Request, call_next):
             "/config",
             "/api-keys",
             "/userscript",
+            "/version",
         )
     )
     is_accounts_spa = request.url.path in ("/accounts", "/accounts/")

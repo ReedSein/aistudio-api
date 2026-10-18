@@ -1,6 +1,16 @@
 <script setup lang="ts">
-import { Menu, Key, RefreshCw, ShieldAlert, ShieldCheck } from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
+import {
+  ArrowUpCircle,
+  Menu,
+  Key,
+  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+} from 'lucide-vue-next'
+import { systemApi } from '@/api/system.ts'
 import { useAuthStore } from '@/stores/auth.ts'
+import type { VersionNotice } from '@/types'
 
 defineProps<{
   title: string
@@ -14,6 +24,41 @@ const emit = defineEmits<{
 }>()
 
 const authStore = useAuthStore()
+const versionNotice = ref<VersionNotice | null>(null)
+
+onMounted(async () => {
+  try {
+    versionNotice.value = await systemApi.getVersion()
+  } catch {
+    versionNotice.value = null
+  }
+})
+
+function shortVersion(tag: string | null): string {
+  return tag ? tag.replace(/^termux-/, '') : ''
+}
+
+const releaseBadge = computed(() =>
+  versionNotice.value?.state === 'newer' ? versionNotice.value : null,
+)
+
+const noticeText = computed(() => {
+  const notice = versionNotice.value
+  if (!notice) return ''
+  if (notice.channel === 'development') return '本地开发版本'
+  switch (notice.state) {
+    case 'current':
+      return '已是最新版本'
+    case 'unpublished':
+      return '尚未发布正式版'
+    case 'unreachable':
+      return '暂时没查到更新，稍后再试'
+    case 'unknown':
+      return '无法确认当前版本'
+    default:
+      return ''
+  }
+})
 </script>
 
 <template>
@@ -32,6 +77,26 @@ const authStore = useAuthStore()
     </div>
 
     <div class="flex items-center gap-2 sm:gap-3">
+      <!-- Release Notice -->
+      <a
+        v-if="releaseBadge"
+        :href="releaseBadge.release_url ?? undefined"
+        target="_blank"
+        rel="noopener"
+        class="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-50 border border-sky-200/70 text-[11px] font-medium text-sky-800 hover:bg-sky-100 transition-colors"
+        title="到 Termux 菜单更新"
+      >
+        <ArrowUpCircle class="w-3.5 h-3.5 text-sky-600 shrink-0" />
+        <span>有新版本 {{ shortVersion(releaseBadge.latest) }}</span>
+        <span class="text-sky-600 underline underline-offset-2">查看更新内容</span>
+      </a>
+      <div
+        v-else-if="noticeText"
+        class="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-50 border border-gray-200/70 text-[11px] font-medium text-gray-500"
+      >
+        <span>{{ noticeText }}</span>
+      </div>
+
       <!-- Auth State Badge -->
       <div
         v-if="!authStore.authEnabled"

@@ -62,3 +62,11 @@ export interface CreateApiKeyRequest {
 export interface UpdateApiKeyRequest {
   name: string
 }
+
+export interface VersionNotice {
+  channel: 'development' | 'stable'
+  state: 'newer' | 'current' | 'unpublished' | 'unreachable' | 'unknown' | null
+  current: string | null
+  latest: string | null
+  release_url: string | null
+}

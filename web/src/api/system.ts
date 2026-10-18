@@ -12,12 +12,17 @@ import type {
   UpdateRuntimeConfigRequest,
   UpdateRuntimeConfigResponse,
   HealthCheckResponse,
+  VersionNotice,
 } from '@/types'
 
 
 export const systemApi = {
   health(): Promise<HealthCheckResponse> {
     return request<HealthCheckResponse>('/health')
+  },
+
+  getVersion(): Promise<VersionNotice> {
+    return request<VersionNotice>('/version')
   },
 
   getStats(): Promise<StatsResponse> {

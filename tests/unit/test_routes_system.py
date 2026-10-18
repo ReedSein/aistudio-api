@@ -169,3 +169,40 @@ async def test_update_runtime_config_roundtrip(monkeypatch, tmp_path):
             "/config/runtime", json={"browser_idle_timeout": 100000}
         )
         assert too_large.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_version_endpoint_reports_a_formal_update(monkeypatch):
+    from termux_release import ReleaseCheck
+
+    from aistudio_api.infrastructure import update_channel
+
+    monkeypatch.setenv("AISTUDIO_INSTALL_CHANNEL", "stable")
+    monkeypatch.setattr(
+        update_channel,
+        "check_release",
+        lambda _root, timeout=30.0: ReleaseCheck(
+            "newer", "termux-v1.0.0", "termux-v1.2.0"
+        ),
+    )
+    async with _client() as client:
+        resp = await client.get("/version")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["channel"] == "stable"
+        assert data["state"] == "newer"
+        assert data["current"] == "termux-v1.0.0"
+        assert data["latest"] == "termux-v1.2.0"
+        assert data["release_url"].endswith("/releases/tag/termux-v1.2.0")
+
+
+@pytest.mark.asyncio
+async def test_version_endpoint_reports_development_channel(monkeypatch):
+    monkeypatch.setenv("AISTUDIO_INSTALL_CHANNEL", "development")
+    async with _client() as client:
+        resp = await client.get("/version")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["channel"] == "development"
+        assert data["state"] is None
+        assert data["release_url"] is None

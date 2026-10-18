@@ -23,6 +23,10 @@ from aistudio_api.infrastructure.gateway.model_defaults import (
     invalidate_config_cache,
     update_configured_runtime_settings,
 )
+from aistudio_api.infrastructure.update_channel import (
+    VersionNotice,
+    version_notice,
+)
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("routes.system")
@@ -75,6 +79,12 @@ async def health():
 @protected_router.get("/stats", response_model=StatsResponse)
 async def stats():
     return stats_response()
+
+
+@protected_router.get("/version", response_model=VersionNotice)
+def version_status() -> VersionNotice:
+    """只读的版本信息与更新提示；网页进入控制台时查询一次。"""
+    return version_notice()
 
 
 # ========== 调度与配额管理 API ==========

@@ -22,6 +22,7 @@ export default defineConfig({
       '/config': 'http://localhost:11451',
       '/api-keys': 'http://localhost:11451',
       '/health': 'http://localhost:11451',
+      '/version': 'http://localhost:11451',
     },
   },
   build: {
