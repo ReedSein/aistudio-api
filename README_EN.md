@@ -11,16 +11,30 @@ Targets Android ARM64 Termux with an interactive Chinese management menu, one-co
 The default location is `~/aistudio-api`, independent of the current directory:
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
 ```
 
 Choose a different parent directory, for example `~/projects/aistudio-api`:
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
-Rerun the same command to resume installation. Unrelated directories, foreign repositories, and local source edits are preserved and reported.
+Public installs and updates use the maintainer-selected latest release, tagged `termux-vX.Y.Z`. Development commits do not change the public version. The install link becomes available after the first formal release; release lookup failures stop installation.
+
+Rerun the same command to resume installation or reinstall at the same location using retained data. Unrelated directories, foreign repositories, and local source edits are preserved and reported.
+
+## Local development and testing
+
+Use the current checkout, including uncommitted edits:
+
+```bash
+cd ~/projects/aistudio-api
+bash scripts/install-termux.sh --dev --dir "$HOME/projects"
+aistudio
+```
+
+This reuses existing configuration, accounts, data, ports, and the browser container. Environment preparation does not fetch or switch source code. Starting the service does not require committing, pushing, or publishing. Only an explicit menu update follows `master` in development mode. See the [Termux guide](./docs/TERMUX.md) for a fresh development install.
 
 ## Manage
 
@@ -28,7 +42,9 @@ Rerun the same command to resume installation. Unrelated directories, foreign re
 aistudio
 ```
 
-The menu offers foreground start, silent background start, stop, check for updates, and update. Ctrl+C stops a foreground service and returns to the menu. A silent service keeps running after the menu exits and writes no service logs or request dumps.
+The menu offers foreground start, silent background start, stop, check for updates, update, and uninstall. Public updates follow formal releases; development updates follow this fork's `master`. Ctrl+C stops a foreground service and returns to the menu. A silent service keeps running after the menu exits and writes no service logs or request dumps.
+
+Uninstall keeps configuration, accounts, and statistics by default, with a separate option to clear installation data. Both show their scope and require confirmation. Development source and Git history are retained, as are shared system packages and browser containers.
 
 The default console address is `http://127.0.0.1:11451`. Import Cookies or an account bundle in the Accounts page. Updates cover application and management code, locked Python dependencies, and the declared browser version; an unchanged browser is reused. A running service is stopped briefly and restarted in its previous mode after a successful update.
 

@@ -1,4 +1,4 @@
-"""Fast-forward updates from the maintained Termux fork only."""
+"""Shared fast-forward updates for public releases and local development."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 
+from termux_release import REPOSITORY, latest_release
 from termux_runtime import (
     Installation,
     ManagerError,
@@ -14,7 +15,6 @@ from termux_runtime import (
     write_object,
 )
 
-REPOSITORY = "https://github.com/ReedSein/aistudio-api.git"
 BRANCH = "master"
 
 
@@ -23,6 +23,7 @@ class UpdateStatus:
     current: str
     available: str
     commits: int
+    version: str
 
 
 class Updater:
@@ -56,27 +57,39 @@ class Updater:
             raise ManagerError(
                 "更新来源不符：此版本仅从 ReedSein/aistudio-api 更新，请检查 origin。"
             )
-        if self.git("branch", "--show-current") != BRANCH:
+        branch = self.git("branch", "--show-current")
+        if self.installation.development and branch != BRANCH:
             raise ManagerError("当前不是 master 使用分支，请在开发分支中手动管理更新。")
-        if self.git("rev-parse", "--abbrev-ref", "@{upstream}") != "origin/master":
+        if (
+            self.installation.development
+            and self.git("rev-parse", "--abbrev-ref", "@{upstream}") != "origin/master"
+        ):
             raise ManagerError("master 未跟踪自有 fork 的 origin/master。")
         if self.git("status", "--porcelain", "--untracked-files=no"):
-            raise ManagerError("源码有未提交修改，更新已停止；请先处理这些修改。")
+            raise ManagerError("源码有未提交修改，操作已停止；请先处理这些修改。")
 
     def check(self) -> UpdateStatus:
         self.verify_checkout()
-        self.git("fetch", "--no-tags", "origin", BRANCH)
+        version = BRANCH if self.installation.development else latest_release()
+        reference = (
+            BRANCH
+            if self.installation.development
+            else f"refs/tags/{version}:refs/tags/{version}"
+        )
+        self.git("fetch", "--no-tags", "origin", reference)
         current = self.git("rev-parse", "HEAD")
-        available = self.git("rev-parse", "origin/master")
+        available = self.git("rev-parse", "FETCH_HEAD^{commit}")
         counts = self.git(
-            "rev-list", "--left-right", "--count", "HEAD...origin/master"
+            "rev-list", "--left-right", "--count", f"HEAD...{available}"
         ).split()
         if int(counts[0]):
-            raise ManagerError("本地存在未发布提交或分支已分叉，不能自动更新。")
-        return UpdateStatus(current, available, int(counts[1]))
+            raise ManagerError("本地领先于目标版本或分支已分叉，不能自动更新。")
+        return UpdateStatus(current, available, int(counts[1]), version)
 
     def prepare(self) -> None:
         command = ["bash", "scripts/setup-termux.sh"]
+        if self.installation.development:
+            command.append("--dev")
         result = subprocess.run(command, cwd=self.installation.root, check=False)
         if result.returncode:
             raise ManagerError(

@@ -10,9 +10,19 @@ import sys
 from pathlib import Path
 
 from termux_runtime import Installation, ManagerError, Service, operation_lock
+from termux_uninstall import Uninstaller
 from termux_update import Updater
 
-CHOICES = ("普通启动", "静默启动", "停止服务", "检查更新", "一键更新", "退出")
+CHOICES = (
+    "普通启动",
+    "静默启动",
+    "停止服务",
+    "检查更新",
+    "一键更新",
+    "卸载（保留数据）",
+    "卸载（清除数据）",
+    "退出",
+)
 
 
 def menu(installation: Installation) -> None:
@@ -28,7 +38,8 @@ def menu(installation: Installation) -> None:
         state = "未运行"
         if running:
             state = "静默运行中" if running.mode == "silent" else "运行中"
-        header = f"AI Studio API · Termux\n状态：{state}  端口：{installation.port}"
+        source = "本地开发" if installation.development else "正式发布"
+        header = f"AI Studio API · Termux · {source}\n状态：{state}  端口：{installation.port}"
         try:
             selection = subprocess.run(
                 ["gum", "choose", "--header", header, *CHOICES],
@@ -61,10 +72,17 @@ def menu(installation: Installation) -> None:
                 elif action == "检查更新":
                     status = Updater(installation).check()
                     print(
-                        f"当前 {status.current[:12]}；远端 {status.available[:12]}；可更新 {status.commits} 个提交。"
+                        f"目标 {status.version}；当前 {status.current[:12]}；远端 {status.available[:12]}；可更新 {status.commits} 个提交。"
                     )
                 elif action == "一键更新":
                     reload_menu, foreground = Updater(installation).update()
+                elif (
+                    action in ("卸载（保留数据）", "卸载（清除数据）")
+                    and Uninstaller(
+                        installation, clear_data=action == "卸载（清除数据）"
+                    ).run()
+                ):
+                    return
             if foreground is not None:
                 running = service.running()
                 if running and running.mode == "foreground":
@@ -94,11 +112,39 @@ def main() -> int:
         "--register", action="store_true", help="登记安装并创建 aistudio 命令"
     )
     setup.add_argument("--install", action="store_true", help="准备运行环境并登记安装")
+    setup.add_argument(
+        "--uninstall", action="store_true", help="卸载，默认保留配置和数据"
+    )
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
+        "--dev",
+        dest="development",
+        action="store_const",
+        const=True,
+        default=None,
+        help="使用当前本地工作区；主动更新跟随 master",
+    )
+    source.add_argument(
+        "--stable",
+        dest="development",
+        action="store_const",
+        const=False,
+        help="主动更新只取正式发布",
+    )
+    parser.add_argument(
+        "--clear-data",
+        action="store_true",
+        help="与 --uninstall 同用，确认后清除本安装数据",
+    )
     parser.add_argument("--project-root", type=Path, help="登记的项目路径")
     parser.add_argument("--port", type=int, help="服务端口，默认 11451")
     args = parser.parse_args()
+    if args.clear_data and not args.uninstall:
+        parser.error("--clear-data 必须与 --uninstall 一起使用")
+    if args.development is not None and not (args.register or args.install):
+        parser.error("--dev / --stable 只用于 --install 或 --register")
     try:
-        installation = Installation.load(args.project_root, args.port)
+        installation = Installation.load(args.project_root, args.port, args.development)
         if args.register or args.install:
             with operation_lock(installation):
                 if args.install:
@@ -109,6 +155,9 @@ def main() -> int:
                     Updater(installation).prepare()
                 entry = installation.register()
             print(f"已登记 {installation.root}\n启动命令：{entry}")
+        elif args.uninstall:
+            with operation_lock(installation):
+                Uninstaller(installation, clear_data=args.clear_data).run()
         else:
             menu(installation)
     except KeyboardInterrupt:

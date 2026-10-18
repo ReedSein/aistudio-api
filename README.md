@@ -11,16 +11,30 @@
 默认安装到 `~/aistudio-api`，与当前所在目录无关：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
 ```
 
 指定父目录，例如安装到 `~/projects/aistudio-api`：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
-再次执行相同安装命令可以续做失败的安装。已有无关目录、源码修改或其他仓库会明确报错并停止。
+安装和更新只使用维护者选定的最新正式发布，日常开发提交不会提供给使用者。正式版本使用 `termux-vX.Y.Z` 标签；首次正式发布前安装链接不可用，获取发布失败时会停止。
+
+再次执行相同安装命令可以续做失败的安装，或在原位置重装并复用保留的数据。已有无关目录、源码修改或其他仓库会明确报错并停止。
+
+## 本机开发与测试
+
+在已有工作区直接使用当前代码，包括未提交修改：
+
+```bash
+cd ~/projects/aistudio-api
+bash scripts/install-termux.sh --dev --dir "$HOME/projects"
+aistudio
+```
+
+这会沿用现有配置、账号、数据、端口和浏览器容器。准备环境不拉取或切换源码，日常启动不要求先提交、push 或发布；开发用法下，菜单中的主动更新才跟随 `master`。新建开发安装的方法见 [Termux 说明](./docs/TERMUX.md#本机开发与测试)。
 
 ## 管理菜单
 
@@ -31,8 +45,9 @@ aistudio
 - **普通启动**：前台显示日志，Ctrl+C 停止并返回菜单。
 - **静默启动**：后台运行，退出菜单后继续运行，不保存服务日志和请求转储。
 - **停止服务**：核对进程身份后正常停止。
-- **检查更新**：检查本仓库 `master` 的新版本。
+- **检查更新**：检查维护者选定的正式版本；开发用法检查本仓库 `master`。
 - **一键更新**：更新项目、管理脚本、锁定的 Python 依赖和指定浏览器；浏览器版本未变时复用。
+- **卸载**：默认保留配置、账号和统计，也可选择清除本安装数据；显示范围并确认后执行。开发工作区的源码和 Git 记录保留，共享系统工具及浏览器容器保留。
 
 默认访问 `http://127.0.0.1:11451`，在 Web 控制台的账号管理页面导入 Cookie 或凭据包。更新会短暂停机，成功后恢复原运行模式。
 

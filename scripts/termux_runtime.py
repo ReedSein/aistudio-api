@@ -67,9 +67,15 @@ class Installation:
     config_dir: Path
     state_dir: Path
     port: int = 11451
+    development: bool = False
 
     @classmethod
-    def load(cls, root: Path | None = None, port: int | None = None) -> Installation:
+    def load(
+        cls,
+        root: Path | None = None,
+        port: int | None = None,
+        development: bool | None = None,
+    ) -> Installation:
         config_dir = (
             Path(os.getenv("XDG_CONFIG_HOME", str(Path.home() / ".config")))
             / "aistudio-termux"
@@ -82,6 +88,11 @@ class Installation:
         saved = read_object(record) if record.exists() else {}
         saved_root = saved.get("project_root")
         saved_port = saved.get("port", 11451)
+        if development is None:
+            saved_development = saved.get("development", False)
+            if type(saved_development) is not bool:
+                raise ManagerError("安装记录中的开发模式格式错误。")
+            development = saved_development
         if root is None:
             if not isinstance(saved_root, str):
                 raise ManagerError("尚未登记安装目录，请先运行 Termux 安装脚本。")
@@ -95,7 +106,7 @@ class Installation:
         root = root.expanduser().resolve(strict=True)
         if not (root / "main.py").is_file():
             raise ManagerError(f"不是 aistudio-api 安装目录：{root}")
-        return cls(root, config_dir.resolve(), state_dir.resolve(), port)
+        return cls(root, config_dir.resolve(), state_dir.resolve(), port, development)
 
     @property
     def config_file(self) -> Path:
@@ -144,7 +155,14 @@ class Installation:
         atomic_write(
             entry, f'#!{shell}\n{ENTRY_MARKER}\nexec {command} "$@"\n'.encode(), 0o755
         )
-        write_object(record, {"project_root": str(self.root), "port": self.port})
+        write_object(
+            record,
+            {
+                "project_root": str(self.root),
+                "port": self.port,
+                "development": self.development,
+            },
+        )
         return entry
 
 

@@ -4,19 +4,22 @@ set -euo pipefail
 
 REPOSITORY="https://github.com/ReedSein/aistudio-api.git"
 INSTALL_PARENT="${HOME}"
+DEVELOPMENT=false
 
 usage() {
     cat <<'EOF'
-Usage: bash install-termux.sh [--dir PARENT_DIRECTORY]
+Usage: bash install-termux.sh [--dev] [--dir PARENT_DIRECTORY]
 
 Default: ~/aistudio-api
 Example: --dir "$HOME/projects" installs ~/projects/aistudio-api
-Existing installations are reused without overwriting local source changes.
+Default: install the maintainer-selected public release.
+--dev: use an existing local checkout as-is, or clone master for a new checkout.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --dev) DEVELOPMENT=true; shift ;;
         --dir)
             [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { echo "--dir requires a parent directory" >&2; exit 2; }
             INSTALL_PARENT="$2"
@@ -38,9 +41,13 @@ if [[ "${INSTALL_PARENT}" == *:* || "${INSTALL_PARENT}" == *$'\n'* ]]; then
     exit 2
 fi
 
-if ! command -v git >/dev/null 2>&1; then
+MISSING=()
+for TOOL in git curl uv python; do
+    command -v "${TOOL}" >/dev/null 2>&1 || MISSING+=("${TOOL}")
+done
+if [[ ${#MISSING[@]} -gt 0 ]]; then
     pkg update -y
-    pkg install -y git
+    pkg install -y "${MISSING[@]}"
 fi
 mkdir -p -- "${INSTALL_PARENT}"
 INSTALL_PARENT="$(cd "${INSTALL_PARENT}" && pwd -P)"
@@ -48,11 +55,47 @@ PROJECT_ROOT="${INSTALL_PARENT}/aistudio-api"
 if [[ -L "${PROJECT_ROOT}" ]]; then
     echo "Refusing to install over a symbolic link: ${PROJECT_ROOT}" >&2
     exit 1
-elif [[ ! -e "${PROJECT_ROOT}" ]]; then
-    git clone --branch master --single-branch "${REPOSITORY}" "${PROJECT_ROOT}"
+fi
+
+REFERENCE=master
+if [[ "${DEVELOPMENT}" == false ]]; then
+    RELEASE_URL="$(curl -fsSL --connect-timeout 15 --max-time 60 -o /dev/null -w '%{url_effective}' https://github.com/ReedSein/aistudio-api/releases/latest)" || {
+        echo "Cannot obtain a public release; no source was changed. The maintainer must publish a release first." >&2
+        exit 1
+    }
+    REFERENCE="${RELEASE_URL#https://github.com/ReedSein/aistudio-api/releases/tag/}"
+    [[ "${REFERENCE}" =~ ^termux-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+        echo "Public releases must use a termux-vX.Y.Z tag; no source was changed." >&2
+        exit 1
+    }
+fi
+
+if [[ ! -e "${PROJECT_ROOT}" ]]; then
+    git clone --branch "${REFERENCE}" --single-branch "${REPOSITORY}" "${PROJECT_ROOT}"
 elif [[ ! -d "${PROJECT_ROOT}/.git" && ! -f "${PROJECT_ROOT}/.git" ]]; then
-    echo "Existing directory is not an installation; nothing was overwritten: ${PROJECT_ROOT}" >&2
-    exit 1
+    # A keep-data uninstall retains its registration, but removes program files.
+    uv run --no-project --no-python-downloads python - "${PROJECT_ROOT}" <<'PY'
+import json, os, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+record = Path(os.getenv("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "aistudio-termux/installation.json"
+try:
+    saved = json.loads(record.read_text())
+except (OSError, ValueError):
+    saved = {}
+if not isinstance(saved, dict) or saved.get("project_root") != str(root):
+    sys.exit("Existing directory is not an installation; nothing was overwritten.")
+PY
+    git -C "${PROJECT_ROOT}" init --initial-branch=master
+    git -C "${PROJECT_ROOT}" remote add origin "${REPOSITORY}"
+    if [[ "${DEVELOPMENT}" == true ]]; then
+        git -C "${PROJECT_ROOT}" fetch --no-tags origin master
+        git -C "${PROJECT_ROOT}" checkout --no-overwrite-ignore -B master FETCH_HEAD
+        git -C "${PROJECT_ROOT}" branch --set-upstream-to=origin/master master
+    else
+        git -C "${PROJECT_ROOT}" fetch --no-tags origin "refs/tags/${REFERENCE}:refs/tags/${REFERENCE}"
+        git -C "${PROJECT_ROOT}" checkout --no-overwrite-ignore --detach FETCH_HEAD
+    fi
 fi
 
 cd "${PROJECT_ROOT}"
@@ -62,15 +105,42 @@ REMOTE="$(git remote get-url --all origin)"
     echo "Existing repository is not ReedSein/aistudio-api; nothing was overwritten." >&2
     exit 1
 }
-[[ "$(git branch --show-current)" == master && "$(git rev-parse --abbrev-ref '@{upstream}')" == origin/master ]] || {
-    echo "Use the master branch tracking origin/master for installation." >&2
-    exit 1
-}
-[[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "Uncommitted source changes found; installation stopped." >&2; exit 1; }
+if [[ "${DEVELOPMENT}" == false ]]; then
+    # The bootstrap must also work with installations predating release support.
+    uv run --no-project --no-python-downloads python - "${PROJECT_ROOT}" "${REFERENCE}" <<'PY'
+import subprocess, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts"))
+from termux_runtime import Installation, ManagerError, Service, operation_lock
+
+def git(*args):
+    return subprocess.run(["git", *args], check=True, text=True, stdout=subprocess.PIPE).stdout.strip()
+
+try:
+    installation = Installation.load(Path(sys.argv[1]))
+    with operation_lock(installation):
+        if Service(installation).running():
+            raise ManagerError("Stop the running service before reinstalling; use the menu to update it.")
+        if git("status", "--porcelain", "--untracked-files=no"):
+            raise ManagerError("Uncommitted source changes found; installation stopped. Use --dev for local development.")
+        if git("branch", "--show-current") not in ("", "master"):
+            raise ManagerError("Use --dev to reuse a development branch.")
+        reference = "refs/tags/" + sys.argv[2]
+        git("fetch", "--no-tags", "origin", reference + ":" + reference)
+        target = git("rev-parse", "FETCH_HEAD^{commit}")
+        if git("rev-list", "--count", target + "..HEAD") != "0":
+            raise ManagerError("Local source is ahead of the public release or has diverged; use --dev to keep using it.")
+        git("merge", "--ff-only", "--no-overwrite-ignore", target)
+except (ManagerError, OSError, subprocess.SubprocessError) as exc:
+    sys.exit(str(exc))
+PY
+fi
 
 printf 'Preparing Termux installation: %s\n' "${PROJECT_ROOT}"
 bash scripts/setup-env.sh
-uv run --no-project --no-python-downloads python scripts/termux_manager.py --install --project-root "${PROJECT_ROOT}"
+MODE=--stable
+[[ "${DEVELOPMENT}" == false ]] || MODE=--dev
+uv run --no-project --no-python-downloads python scripts/termux_manager.py --install "${MODE}" --project-root "${PROJECT_ROOT}"
 printf '\nInstallation complete. Run: aistudio\n'
 case ":${PATH}:" in
     *":${HOME}/.local/bin:"*) ;;

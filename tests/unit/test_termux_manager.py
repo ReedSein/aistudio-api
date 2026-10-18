@@ -21,6 +21,7 @@ from termux_runtime import (
     operation_lock,
     write_object,
 )
+from termux_uninstall import Uninstaller
 from termux_update import Updater
 
 
@@ -251,7 +252,9 @@ def update_repositories(tmp_path):
     git(client, "config", "user.name", "Test")
     git(client, "config", "user.email", "test@example.invalid")
     git(client, "config", "commit.gpgsign", "false")
-    installation = Installation(client, tmp_path / "config", tmp_path / "state")
+    installation = Installation(
+        client, tmp_path / "config", tmp_path / "state", development=True
+    )
     return Updater(installation, str(remote)), source
 
 
@@ -363,3 +366,216 @@ def test_network_failure_is_reported(update_repositories):
 def test_installation_default_port_is_11451():
     installation = Installation(Path("/nonexistent"), Path("/cfg"), Path("/state"))
     assert installation.port == 11451
+
+
+def test_development_registration_and_dirty_source_can_run(installation):
+    development = replace(installation, development=True)
+    development.register()
+    git(development.root, "init", "--initial-branch=work-in-progress")
+    (development.root / "uncommitted.py").write_text("# local work\n")
+    loaded = Installation.load()
+    assert loaded.development
+    service = Service(loaded)
+    process = service.start("silent", timeout=10)
+    try:
+        assert service.healthy()
+        assert (loaded.root / "uncommitted.py").read_text() == "# local work\n"
+        assert git(loaded.root, "branch", "--show-current") == "work-in-progress"
+    finally:
+        service.stop()
+        process.wait(timeout=5)
+
+
+def test_public_updates_follow_release_tag_instead_of_master(
+    update_repositories, monkeypatch
+):
+    import termux_update
+
+    updater, source = update_repositories
+    updater.installation = replace(updater.installation, development=False)
+    git(source, "tag", "termux-v1.0.0")
+    git(source, "push", "origin", "termux-v1.0.0")
+    monkeypatch.setattr(termux_update, "latest_release", lambda: "termux-v1.0.0")
+    initial = updater.check().current
+    publish(source, "experimental.py")
+    status = updater.check()
+    assert status.available == initial and status.commits == 0
+    assert status.version == "termux-v1.0.0"
+    git(source, "tag", "-a", "termux-v1.1.0", "-m", "tested release")
+    git(source, "push", "origin", "termux-v1.1.0")
+    monkeypatch.setattr(termux_update, "latest_release", lambda: "termux-v1.1.0")
+    monkeypatch.setattr(updater, "prepare", lambda: None)
+    monkeypatch.setattr(Installation, "register", lambda self: Path("unused"))
+    changed, _ = updater.update()
+    assert changed
+    assert updater.check().current == git(source, "rev-parse", "termux-v1.1.0^{commit}")
+    publish(source, "next-experiment.py")
+    assert updater.check().commits == 0
+    assert not (updater.installation.root / "next-experiment.py").exists()
+
+
+def test_public_update_does_not_downgrade_local_work(update_repositories, monkeypatch):
+    import termux_update
+
+    updater, source = update_repositories
+    git(source, "tag", "termux-v1.0.0")
+    git(source, "push", "origin", "termux-v1.0.0")
+    publish(source)
+    git(updater.installation.root, "pull", "--ff-only")
+    updater.installation = replace(updater.installation, development=False)
+    monkeypatch.setattr(termux_update, "latest_release", lambda: "termux-v1.0.0")
+    head = git(updater.installation.root, "rev-parse", "HEAD")
+    with pytest.raises(ManagerError, match="领先"):
+        updater.check()
+    assert git(updater.installation.root, "rev-parse", "HEAD") == head
+
+
+def prepare_uninstall(installation, *, development=True):
+    result = replace(installation, development=development)
+    git(result.root, "init", "--initial-branch=master")
+    for key, value in (
+        ("user.name", "Test"),
+        ("user.email", "test@example.invalid"),
+        ("commit.gpgsign", "false"),
+    ):
+        git(result.root, "config", key, value)
+    git(result.root, "add", "main.py", "config.yaml")
+    git(result.root, "commit", "-m", "fixture program")
+    git(
+        result.root,
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/ReedSein/aistudio-api.git",
+    )
+    git(result.root, "update-ref", "refs/remotes/origin/master", "HEAD")
+    result.register()
+    (result.root / "data").mkdir()
+    (result.root / "data/account.json").write_text("fixture account data")
+    (result.root / ".cloakbrowser").mkdir()
+    (result.root / ".cloakbrowser/browser").write_text("fixture browser")
+    return result
+
+
+@pytest.mark.parametrize("development", [True, False])
+def test_uninstall_keeps_data_and_development_source(
+    installation, monkeypatch, development
+):
+    target = prepare_uninstall(installation, development=development)
+    head = git(target.root, "rev-parse", "HEAD")
+    (target.root / "personal-notes.md").write_text("keep this local file")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "UNINSTALL")
+    with operation_lock(target):
+        assert Uninstaller(target).run()
+    assert (target.root / "data/account.json").read_text() == "fixture account data"
+    assert target.config_file.read_text() == "api_keys: []\n"
+    assert (target.config_dir / "installation.json").exists()
+    assert (target.root / "personal-notes.md").exists()
+    assert not (Path.home() / ".local/bin/aistudio").exists()
+    assert not (target.root / ".venv").exists()
+    assert not (target.root / ".cloakbrowser").exists()
+    assert (target.root / "main.py").exists() == development
+    assert (target.root / ".git").exists() == development
+    if development:
+        assert git(target.root, "rev-parse", "HEAD") == head
+
+
+def test_clear_data_preserves_developer_edits_and_external_paths(
+    installation, monkeypatch, tmp_path
+):
+    target = prepare_uninstall(installation)
+    (target.root / "main.py").write_text("# unfinished source changes\n")
+    external = tmp_path / "external-accounts"
+    external.mkdir()
+    (external / "auth.json").write_text("external fixture")
+    monkeypatch.setenv("AISTUDIO_ACCOUNTS_DIR", str(external))
+    monkeypatch.setattr("builtins.input", lambda _prompt: "UNINSTALL")
+    with operation_lock(target):
+        assert Uninstaller(target, clear_data=True).run()
+    assert (target.root / "main.py").read_text() == "# unfinished source changes\n"
+    assert (target.root / ".git").is_dir()
+    assert not (target.root / "data").exists()
+    assert not target.config_file.exists()
+    assert not (target.config_dir / "installation.json").exists()
+    assert (external / "auth.json").read_text() == "external fixture"
+
+
+def test_cancel_uninstall_leaves_running_service_and_files(installation, monkeypatch):
+    target = prepare_uninstall(installation)
+    service = Service(target)
+    process = service.start("silent", timeout=10)
+    try:
+        monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+        with operation_lock(target):
+            assert not Uninstaller(target).run()
+        assert service.healthy()
+        assert (target.root / ".venv").exists()
+        assert (Path.home() / ".local/bin/aistudio").exists()
+    finally:
+        service.stop()
+        process.wait(timeout=5)
+
+
+def test_uninstall_stops_owned_service_before_removing_runtime(
+    installation, monkeypatch
+):
+    target = prepare_uninstall(installation)
+    service = Service(target)
+    process = service.start("silent", timeout=10)
+    try:
+        monkeypatch.setattr("builtins.input", lambda _prompt: "UNINSTALL")
+        with operation_lock(target):
+            assert Uninstaller(target).run()
+        process.wait(timeout=5)
+        assert not target.process_file.exists()
+        assert not (target.root / ".venv").exists()
+    finally:
+        if process.poll() is None:
+            service.stop()
+            process.wait(timeout=5)
+
+
+def test_uninstall_does_not_follow_data_symlink(installation, monkeypatch, tmp_path):
+    target = replace(installation, development=True)
+    target.register()
+    external = tmp_path / "external-data"
+    external.mkdir()
+    (external / "keep.json").write_text("keep")
+    (target.root / "data").symlink_to(external, target_is_directory=True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "UNINSTALL")
+    with operation_lock(target):
+        assert Uninstaller(target, clear_data=True).run()
+    assert (external / "keep.json").read_text() == "keep"
+
+
+def test_uninstall_refuses_foreign_entry_before_stopping_service(installation):
+    target = prepare_uninstall(installation)
+    entry = Path.home() / ".local/bin/aistudio"
+    entry.write_text("unrelated command")
+    with pytest.raises(ManagerError, match="不属于"):
+        Uninstaller(target).run()
+    assert (target.root / ".venv").exists()
+    assert entry.read_text() == "unrelated command"
+
+
+def test_public_uninstall_protects_modified_source(installation):
+    target = prepare_uninstall(installation, development=False)
+    (target.root / "main.py").write_text("# local code\n")
+    with pytest.raises(ManagerError, match="未提交"):
+        Uninstaller(target).run()
+    assert (target.root / ".git").exists()
+    assert (target.root / ".venv").exists()
+
+
+def test_public_uninstall_preserves_unpublished_branch_history(installation):
+    target = prepare_uninstall(installation, development=False)
+    git(target.root, "checkout", "-b", "unfinished")
+    (target.root / "local-work.py").write_text("# saved local work\n")
+    git(target.root, "add", "local-work.py")
+    git(target.root, "commit", "-m", "unfinished work")
+    unpublished = git(target.root, "rev-parse", "HEAD")
+    git(target.root, "checkout", "master")
+    with pytest.raises(ManagerError, match="仅保存在此处"):
+        Uninstaller(target).run()
+    assert git(target.root, "rev-parse", "unfinished") == unpublished
+    assert (target.root / ".venv").exists()
