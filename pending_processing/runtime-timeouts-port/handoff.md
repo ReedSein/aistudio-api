@@ -4,7 +4,7 @@
 
 ## Anchor
 
-- `~/projects/aistudio-api`，分支 `master`；最后工作提交 `e19c10c825d60c5eaee439af12430cf17ad6150f`（② 的实现提交，本任务功能代码与 `1338801` 一致）；本目录记录随后一并提交，除两份台账/handoff 外无其他未提交改动。
+- `~/projects/aistudio-api`，分支 `master`；最后工作提交 `8bdd96510d61d65c868a450fd6c23f7ee1f93443`（其后均为 ② 任务的修复与文档提交；本任务功能代码与 `1338801` 一致）；本目录记录随后一并提交，除两份台账/handoff 外无其他未提交改动。
 - 服务：管理引擎静默运行中，进程 `11487`、端口 11451（本日因 ② 重启，载入其服务端路由；本任务功能与迁移时一致）；`curl 127.0.0.1:11451/health` → ok（本次核对）。
 - 工具环境：与 ② handoff 的 Anchor 相同（ruff 临时二进制、pyright 经 npx、前端用本地 node_modules）。
 
@@ -24,7 +24,7 @@
 ## Next
 
 1. 主人合并实测（与 ② 一并进行）— ① 打开 `http://localhost:11451/`，设置页「运行参数」改值、填 0 发长思考请求、菜单重启后配置保持、静默启动打印控制台网址 — 完成条件：主人确认可用。
-2. 推送 — `git push origin master`（`1338801`、`4ca9947`、`e19c10c825d60c5eaee439af12430cf17ad6150f` 及记录提交一并推送）— 由主人实测通过后发话触发。
+2. 推送 — `git push origin master`（全部本地提交一并推送）— 由主人实测通过后发话触发。
 3. 归档 — 台账更新为「已采纳并归档」、删除本 handoff、整目录移入 `design_archive/runtime-timeouts-port/`、提交并推送（与 ② 归档同批）。
 
 ## Outstanding verification
