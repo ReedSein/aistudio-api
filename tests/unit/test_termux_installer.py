@@ -36,7 +36,7 @@ def test_missing_directory_argument_is_a_clear_error():
 
 
 def test_existing_unrelated_directory_is_preserved(tmp_path, disposable_install):
-    root = tmp_path / "unrelated/aistudio-api"
+    root = tmp_path / "unrelated/aistudio-api-termux"
     root.mkdir(parents=True)
     owned_file = root / "keep.txt"
     owned_file.write_text("keep")
@@ -51,7 +51,7 @@ def test_existing_unrelated_directory_is_preserved(tmp_path, disposable_install)
 @pytest.fixture
 def disposable_install(tmp_path):
     parent = tmp_path / "parent with spaces"
-    root = parent / "aistudio-api"
+    root = parent / "aistudio-api-termux"
     (root / "scripts").mkdir(parents=True)
     (root / "main.py").write_text("# fixture\n")
     (root / "scripts/setup-env.sh").write_text("exit 0\n")
@@ -96,7 +96,7 @@ def disposable_install(tmp_path):
     uv.chmod(0o755)
     curl = bin_dir / "curl"
     curl.write_text(
-        "#!/bin/sh\nprintf '%s' 'https://github.com/ReedSein/aistudio-api/releases/tag/termux-v1.0.0'\n"
+        "#!/bin/sh\nprintf '%s' 'https://github.com/ReedSein/aistudio-api-termux/releases/tag/termux-v1.0.0'\n"
     )
     curl.chmod(0o755)
     git("tag", "termux-v1.0.0")
@@ -142,8 +142,22 @@ def test_installer_refuses_foreign_origin(disposable_install):
     )
     result = run_installer("--dev", "--dir", str(parent), env=env)
     assert result.returncode == 1
-    assert "not ReedSein/aistudio-api" in result.stderr
+    assert "not ReedSein/aistudio-api-termux" in result.stderr
     assert not log.exists()
+
+
+def test_installer_accepts_both_repository_addresses(disposable_install):
+    parent, _, git, _, env = disposable_install
+    result = run_installer("--dev", "--dir", str(parent), env=env)
+    assert result.returncode == 0, result.stderr
+    git(
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/ReedSein/aistudio-api-termux.git",
+    )
+    result = run_installer("--dev", "--dir", str(parent), env=env)
+    assert result.returncode == 0, result.stderr
 
 
 def test_developer_install_keeps_local_branch_and_edits(disposable_install):
@@ -180,6 +194,7 @@ def local_release_remote(disposable_install, tmp_path):
         f"#!{sys.executable}\nimport os, sys\n"
         f"args = [{executable!r}]\n"
         "if 'fetch' in sys.argv or 'clone' in sys.argv:\n"
+        f"    args += ['-c', {'url.' + str(remote) + '.insteadOf=https://github.com/ReedSein/aistudio-api-termux.git'!r}]\n"
         f"    args += ['-c', {'url.' + str(remote) + '.insteadOf=https://github.com/ReedSein/aistudio-api.git'!r}]\n"
         "args += sys.argv[1:]\nos.execv(args[0], args)\n"
     )
@@ -199,7 +214,7 @@ def test_public_fresh_install_uses_release_even_when_master_is_ahead(
     parent = tmp_path / "public installation"
     result = run_installer("--dir", str(parent), env=env)
     assert result.returncode == 0, result.stderr
-    installed = parent / "aistudio-api"
+    installed = parent / "aistudio-api-termux"
     assert (
         subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=installed, text=True

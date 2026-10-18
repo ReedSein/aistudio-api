@@ -62,7 +62,7 @@ def test_launcher_uses_declared_version_and_handles_spaces(tmp_path):
     log = tmp_path / "arguments.json"
     fake = bin_dir / "proot-distro"
     fake.write_text(
-        f'#!{sys.executable}\nimport json, sys\nfrom pathlib import Path\nif sys.argv[1] == "list":\n print("aistudio-api")\nelse:\n Path({str(log)!r}).write_text(json.dumps(sys.argv[1:]))\n'
+        f'#!{sys.executable}\nimport json, sys\nfrom pathlib import Path\nif sys.argv[1] == "list":\n print("aistudio-api-termux")\nelse:\n Path({str(log)!r}).write_text(json.dumps(sys.argv[1:]))\n'
     )
     fake.chmod(0o755)
     launcher = (

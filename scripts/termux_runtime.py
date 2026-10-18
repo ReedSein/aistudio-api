@@ -6,6 +6,7 @@ import fcntl
 import http.client
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -21,6 +22,9 @@ from typing import Literal
 
 Mode = Literal["foreground", "silent"]
 ENTRY_MARKER = "# Managed by aistudio-api Termux manager."
+DEFAULT_PROOT_NAME = "aistudio-api-termux"
+LEGACY_PROOT_NAME = "aistudio-api"
+PROOT_NAME_PATTERN = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]*")
 
 
 class ManagerError(RuntimeError):
@@ -68,6 +72,7 @@ class Installation:
     state_dir: Path
     port: int = 11451
     development: bool = False
+    proot_name: str = DEFAULT_PROOT_NAME
 
     @classmethod
     def load(
@@ -88,6 +93,24 @@ class Installation:
         saved = read_object(record) if record.exists() else {}
         saved_root = saved.get("project_root")
         saved_port = saved.get("port", 11451)
+        saved_proot = saved.get("proot_name")
+        if saved_proot is not None and (
+            not isinstance(saved_proot, str)
+            or not PROOT_NAME_PATTERN.fullmatch(saved_proot)
+        ):
+            raise ManagerError("安装记录中的浏览器环境名称格式错误。")
+        if saved_proot is None:
+            override = os.getenv("AISTUDIO_PROOT_NAME")
+            if override and not PROOT_NAME_PATTERN.fullmatch(override):
+                raise ManagerError("AISTUDIO_PROOT_NAME 名称格式错误。")
+            if override:
+                saved_proot = override
+            elif record.exists():
+                # Registrations written before container tracking belong to the
+                # original default container; never redirect them to the new name.
+                saved_proot = LEGACY_PROOT_NAME
+            else:
+                saved_proot = DEFAULT_PROOT_NAME
         if development is None:
             saved_development = saved.get("development", False)
             if type(saved_development) is not bool:
@@ -106,7 +129,14 @@ class Installation:
         root = root.expanduser().resolve(strict=True)
         if not (root / "main.py").is_file():
             raise ManagerError(f"不是 aistudio-api 安装目录：{root}")
-        return cls(root, config_dir.resolve(), state_dir.resolve(), port, development)
+        return cls(
+            root,
+            config_dir.resolve(),
+            state_dir.resolve(),
+            port,
+            development,
+            saved_proot,
+        )
 
     @property
     def config_file(self) -> Path:
@@ -161,6 +191,7 @@ class Installation:
                 "project_root": str(self.root),
                 "port": self.port,
                 "development": self.development,
+                "proot_name": self.proot_name,
             },
         )
         return entry
@@ -283,6 +314,10 @@ class Service:
         env["AISTUDIO_CONFIG_FILE"] = str(self.installation.config_file)
         env["AISTUDIO_BROWSER_EXECUTABLE"] = str(
             self.installation.root / "scripts/cloakbrowser_termux/run-chrome.sh"
+        )
+        env["AISTUDIO_PROOT_NAME"] = self.installation.proot_name
+        env["AISTUDIO_INSTALL_CHANNEL"] = (
+            "development" if self.installation.development else "stable"
         )
         if mode == "silent":
             env.update(

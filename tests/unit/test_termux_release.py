@@ -44,3 +44,15 @@ def test_missing_or_unavailable_release_is_an_error(monkeypatch, status):
     monkeypatch.setattr(termux_release.urllib.request, "urlopen", fail)
     with pytest.raises(ManagerError, match=r"尚无正式|获取正式"):
         termux_release.latest_release()
+
+
+def test_legacy_release_address_is_still_accepted(monkeypatch):
+    response = SimpleNamespace(
+        geturl=lambda: termux_release.LEGACY_RELEASE_PREFIX + "termux-v1.2.3"
+    )
+    monkeypatch.setattr(
+        termux_release.urllib.request,
+        "urlopen",
+        lambda *_a, **_kw: nullcontext(response),
+    )
+    assert termux_release.latest_release() == "termux-v1.2.3"

@@ -51,6 +51,7 @@ HTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
     monkeypatch.delenv("AISTUDIO_CONFIG_FILE", raising=False)
+    monkeypatch.delenv("AISTUDIO_PROOT_NAME", raising=False)
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -69,10 +70,45 @@ def test_register_preserves_configuration_and_quotes_paths(installation):
     installation.config_file.write_text("user_setting: keep\n")
     installation.register()
     assert installation.config_file.read_text() == "user_setting: keep\n"
+    record = json.loads(
+        (installation.config_dir / "installation.json").read_text(encoding="utf-8")
+    )
+    assert record["proot_name"] == "aistudio-api-termux"
     assert "project with spaces" in entry.read_text()
     assert entry.stat().st_mode & 0o777 == 0o755
     assert installation.config_file.stat().st_mode & 0o777 == 0o600
-    assert Installation.load().root == installation.root
+    loaded = Installation.load()
+    assert loaded.root == installation.root
+    assert loaded.proot_name == "aistudio-api-termux"
+
+
+def test_legacy_registration_keeps_the_original_container(installation):
+    installation.config_dir.mkdir(parents=True, exist_ok=True)
+    write_object(
+        installation.config_dir / "installation.json",
+        {"project_root": str(installation.root), "port": installation.port},
+    )
+    loaded = Installation.load()
+    assert loaded.proot_name == "aistudio-api"
+    loaded.register()
+    record = json.loads(
+        (installation.config_dir / "installation.json").read_text(encoding="utf-8")
+    )
+    assert record["proot_name"] == "aistudio-api"
+
+
+def test_invalid_record_container_name_is_rejected(installation):
+    installation.config_dir.mkdir(parents=True, exist_ok=True)
+    write_object(
+        installation.config_dir / "installation.json",
+        {
+            "project_root": str(installation.root),
+            "port": installation.port,
+            "proot_name": "bad name",
+        },
+    )
+    with pytest.raises(ManagerError, match="浏览器环境名称"):
+        Installation.load()
 
 
 def test_register_refuses_an_unrelated_command(installation):
@@ -141,6 +177,16 @@ def test_silent_environment_disables_all_dump_paths(installation):
     assert env["AISTUDIO_DUMP_RAW_RESPONSE"] == "0"
 
 
+def test_environment_injects_container_and_channel(installation):
+    env = Service(installation).environment("silent")
+    assert env["AISTUDIO_PROOT_NAME"] == "aistudio-api-termux"
+    assert env["AISTUDIO_INSTALL_CHANNEL"] == "stable"
+    development = replace(installation, development=True)
+    dev_env = Service(development).environment("silent")
+    assert dev_env["AISTUDIO_INSTALL_CHANNEL"] == "development"
+    assert dev_env["AISTUDIO_PROOT_NAME"] == "aistudio-api-termux"
+
+
 def test_browser_port_conflict_does_not_launch_a_service(installation, monkeypatch):
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -204,6 +250,25 @@ def test_restart_preserves_original_launch_environment(installation, monkeypatch
     finally:
         service.stop()
         restarted.wait(timeout=5)
+
+
+def test_prepare_passes_container_name_to_setup(installation, monkeypatch):
+    import termux_update
+
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(termux_update.subprocess, "run", fake_run)
+    Updater(installation).prepare()
+    assert captured["command"][:2] == ["bash", "scripts/setup-termux.sh"]
+    assert captured["env"]["AISTUDIO_PROOT_NAME"] == "aistudio-api-termux"
+    legacy = replace(installation, proot_name="aistudio-api")
+    Updater(legacy).prepare()
+    assert captured["env"]["AISTUDIO_PROOT_NAME"] == "aistudio-api"
 
 
 def test_foreground_interrupt_stops_and_returns(installation, monkeypatch):
@@ -276,6 +341,29 @@ def test_update_refuses_author_repository(installation):
     )
     with pytest.raises(ManagerError, match="来源不符"):
         Updater(installation).check()
+
+
+def test_update_source_accepts_both_repository_addresses(installation):
+    git(installation.root, "init", "--initial-branch=master")
+    for key, value in (
+        ("user.name", "Test"),
+        ("user.email", "test@example.invalid"),
+        ("commit.gpgsign", "false"),
+    ):
+        git(installation.root, "config", key, value)
+    git(installation.root, "add", "main.py", "config.yaml")
+    git(installation.root, "commit", "-m", "fixture")
+    for url in (
+        "https://github.com/ReedSein/aistudio-api.git",
+        "https://github.com/ReedSein/aistudio-api-termux.git",
+        "git@github.com:ReedSein/aistudio-api.git",
+        "git@github.com:ReedSein/aistudio-api-termux.git",
+    ):
+        if git(installation.root, "remote"):
+            git(installation.root, "remote", "set-url", "origin", url)
+        else:
+            git(installation.root, "remote", "add", "origin", url)
+        Updater(installation).verify_checkout()
 
 
 def test_fast_forward_updates_manager_code_and_handles_no_update(

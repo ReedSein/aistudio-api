@@ -8,9 +8,17 @@ import urllib.request
 
 from termux_runtime import ManagerError
 
-REPOSITORY = "https://github.com/ReedSein/aistudio-api.git"
-LATEST_RELEASE = "https://github.com/ReedSein/aistudio-api/releases/latest"
-RELEASE_PREFIX = "https://github.com/ReedSein/aistudio-api/releases/tag/"
+REPOSITORY = "https://github.com/ReedSein/aistudio-api-termux.git"
+LATEST_RELEASE = "https://github.com/ReedSein/aistudio-api-termux/releases/latest"
+RELEASE_PREFIX = "https://github.com/ReedSein/aistudio-api-termux/releases/tag/"
+LEGACY_REPOSITORY = "https://github.com/ReedSein/aistudio-api.git"
+LEGACY_RELEASE_PREFIX = "https://github.com/ReedSein/aistudio-api/releases/tag/"
+ACCEPTED_ORIGINS = (
+    REPOSITORY,
+    "git@github.com:ReedSein/aistudio-api-termux.git",
+    LEGACY_REPOSITORY,
+    "git@github.com:ReedSein/aistudio-api.git",
+)
 
 
 def latest_release() -> str:
@@ -24,9 +32,12 @@ def latest_release() -> str:
         raise ManagerError(f"获取正式版本失败：HTTP {exc.code}。") from exc
     except (OSError, urllib.error.URLError) as exc:
         raise ManagerError(f"获取正式版本失败：{exc}。") from exc
-    tag = url.removeprefix(RELEASE_PREFIX)
-    if not url.startswith(RELEASE_PREFIX) or not re.fullmatch(
-        r"termux-v[0-9]+\.[0-9]+\.[0-9]+", tag
-    ):
+    if url.startswith(RELEASE_PREFIX):
+        tag = url.removeprefix(RELEASE_PREFIX)
+    elif url.startswith(LEGACY_RELEASE_PREFIX):
+        tag = url.removeprefix(LEGACY_RELEASE_PREFIX)
+    else:
+        tag = ""
+    if not re.fullmatch(r"termux-v[0-9]+\.[0-9]+\.[0-9]+", tag):
         raise ManagerError("正式发布必须使用 termux-vX.Y.Z 标签。")
     return tag

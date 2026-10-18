@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Install the maintained Termux fork; --dir is the parent of aistudio-api/.
+# Install the maintained Termux fork; --dir is the parent of aistudio-api-termux/.
 set -euo pipefail
 
-REPOSITORY="https://github.com/ReedSein/aistudio-api.git"
+REPOSITORY="https://github.com/ReedSein/aistudio-api-termux.git"
 INSTALL_PARENT="${HOME}"
 DEVELOPMENT=false
 
@@ -10,8 +10,8 @@ usage() {
     cat <<'EOF'
 Usage: bash install-termux.sh [--dev] [--dir PARENT_DIRECTORY]
 
-Default: ~/aistudio-api
-Example: --dir "$HOME/projects" installs ~/projects/aistudio-api
+Default: ~/aistudio-api-termux
+Example: --dir "$HOME/projects" installs ~/projects/aistudio-api-termux
 Default: install the maintainer-selected public release.
 --dev: use an existing local checkout as-is, or clone master for a new checkout.
 EOF
@@ -51,7 +51,7 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
 fi
 mkdir -p -- "${INSTALL_PARENT}"
 INSTALL_PARENT="$(cd "${INSTALL_PARENT}" && pwd -P)"
-PROJECT_ROOT="${INSTALL_PARENT}/aistudio-api"
+PROJECT_ROOT="${INSTALL_PARENT}/aistudio-api-termux"
 if [[ -L "${PROJECT_ROOT}" ]]; then
     echo "Refusing to install over a symbolic link: ${PROJECT_ROOT}" >&2
     exit 1
@@ -59,11 +59,11 @@ fi
 
 REFERENCE=master
 if [[ "${DEVELOPMENT}" == false ]]; then
-    RELEASE_URL="$(curl -fsSL --connect-timeout 15 --max-time 60 -o /dev/null -w '%{url_effective}' https://github.com/ReedSein/aistudio-api/releases/latest)" || {
+    RELEASE_URL="$(curl -fsSL --connect-timeout 15 --max-time 60 -o /dev/null -w '%{url_effective}' https://github.com/ReedSein/aistudio-api-termux/releases/latest)" || {
         echo "Cannot obtain a public release; no source was changed. The maintainer must publish a release first." >&2
         exit 1
     }
-    REFERENCE="${RELEASE_URL#https://github.com/ReedSein/aistudio-api/releases/tag/}"
+    REFERENCE="${RELEASE_URL#https://github.com/ReedSein/aistudio-api-termux/releases/tag/}"
     [[ "${REFERENCE}" =~ ^termux-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
         echo "Public releases must use a termux-vX.Y.Z tag; no source was changed." >&2
         exit 1
@@ -101,8 +101,8 @@ fi
 cd "${PROJECT_ROOT}"
 [[ "$(git rev-parse --show-toplevel)" == "${PROJECT_ROOT}" ]] || { echo "Unexpected repository root." >&2; exit 1; }
 REMOTE="$(git remote get-url --all origin)"
-[[ "${REMOTE}" == "${REPOSITORY}" || "${REMOTE}" == git@github.com:ReedSein/aistudio-api.git ]] || {
-    echo "Existing repository is not ReedSein/aistudio-api; nothing was overwritten." >&2
+[[ "${REMOTE}" == "${REPOSITORY}" || "${REMOTE}" == git@github.com:ReedSein/aistudio-api-termux.git || "${REMOTE}" == https://github.com/ReedSein/aistudio-api.git || "${REMOTE}" == git@github.com:ReedSein/aistudio-api.git ]] || {
+    echo "Existing repository is not ReedSein/aistudio-api-termux; nothing was overwritten." >&2
     exit 1
 }
 if [[ "${DEVELOPMENT}" == false ]]; then

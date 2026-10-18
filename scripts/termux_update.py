@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from dataclasses import dataclass
 
-from termux_release import REPOSITORY, latest_release
+from termux_release import ACCEPTED_ORIGINS, REPOSITORY, latest_release
 from termux_runtime import (
     Installation,
     ManagerError,
@@ -52,10 +53,10 @@ class Updater:
         urls = self.git("remote", "get-url", "--all", "origin").splitlines()
         allowed = {self.repository}
         if self.repository == REPOSITORY:
-            allowed.add("git@github.com:ReedSein/aistudio-api.git")
+            allowed = set(ACCEPTED_ORIGINS)
         if len(urls) != 1 or urls[0] not in allowed:
             raise ManagerError(
-                "更新来源不符：此版本仅从 ReedSein/aistudio-api 更新，请检查 origin。"
+                "更新来源不符：此版本仅从 ReedSein/aistudio-api-termux 更新，请检查 origin。"
             )
         branch = self.git("branch", "--show-current")
         if self.installation.development and branch != BRANCH:
@@ -90,7 +91,11 @@ class Updater:
         command = ["bash", "scripts/setup-termux.sh"]
         if self.installation.development:
             command.append("--dev")
-        result = subprocess.run(command, cwd=self.installation.root, check=False)
+        environment = dict(os.environ)
+        environment["AISTUDIO_PROOT_NAME"] = self.installation.proot_name
+        result = subprocess.run(
+            command, cwd=self.installation.root, env=environment, check=False
+        )
         if result.returncode:
             raise ManagerError(
                 f"更新环境失败：setup-termux.sh，退出码 {result.returncode}。"

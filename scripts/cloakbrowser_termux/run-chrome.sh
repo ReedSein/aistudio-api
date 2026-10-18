@@ -17,12 +17,12 @@
 #       --user-data-dir=<abs path on host> --headless=new about:blank
 #
 # Env:
-#   AISTUDIO_PROOT_NAME   proot-distro container name (default: aistudio-api)
+#   AISTUDIO_PROOT_NAME   proot-distro container name (default: aistudio-api-termux)
 #   CLOAKBROWSER_PROJECT_DIR   override project root (default: dirname-of-script/../..)
 
 set -euo pipefail
 
-: "${AISTUDIO_PROOT_NAME:=aistudio-api}"
+: "${AISTUDIO_PROOT_NAME:=aistudio-api-termux}"
 : "${CLOAKBROWSER_PROJECT_DIR:=}"
 if [[ -z "${CLOAKBROWSER_PROJECT_DIR}" ]]; then
     CLOAKBROWSER_PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

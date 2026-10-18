@@ -3,14 +3,14 @@
 # Installs or stages Chromium / CloakBrowser according to the current platform.
 #
 # Platforms supported:
-#   - Android (Termux): Sets up proot-distro container (aistudio-api) and stages CloakBrowser ARM64.
+#   - Android (Termux): Sets up proot-distro container (aistudio-api-termux) and stages CloakBrowser ARM64.
 #   - Linux (x86_64 / aarch64): Downloads prebuilt stealth CloakBrowser into .cloakbrowser/
 #     or verifies system Chromium / Chrome.
 #   - macOS (Apple Silicon / Intel) / Windows: Verifies installed system Chrome/Chromium/Edge.
 #
 # Flags:
 #   --project-root PATH      where to place .cloakbrowser (default: this project)
-#   --proot-name NAME        container name for Termux (default: aistudio-api)
+#   --proot-name NAME        container name for Termux (default: aistudio-api-termux)
 #   --proot-distro IMAGE     OCI image for Termux (default: ubuntu:24.04)
 #   --skip-proot-install     don't create/update proot container
 #   --skip-browser-download  don't re-fetch CloakBrowser tarball
@@ -19,7 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PROOT_NAME="${AISTUDIO_PROOT_NAME:-aistudio-api}"
+PROOT_NAME="${AISTUDIO_PROOT_NAME:-aistudio-api-termux}"
 PROOT_IMAGE="ubuntu:24.04"
 read -r CHROMIUM_VERSION < "${SCRIPT_DIR}/cloakbrowser.version"
 SKIP_PROOT=0
