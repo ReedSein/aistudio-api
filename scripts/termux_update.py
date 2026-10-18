@@ -110,7 +110,9 @@ class Updater:
                 service.stop()
             journal["stage"] = "code"
             write_object(journal_path, journal)
-            self.git("merge", "--ff-only", status.available)
+            # Git silently replaces ignored local files that the update adds;
+            # stop instead so user data and local notes survive.
+            self.git("merge", "--ff-only", "--no-overwrite-ignore", status.available)
             journal["stage"] = "environment"
             write_object(journal_path, journal)
             self.prepare()

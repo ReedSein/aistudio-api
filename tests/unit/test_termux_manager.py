@@ -305,6 +305,24 @@ def test_local_edits_and_divergence_stop_updates(update_repositories):
     assert git(root, "rev-parse", "HEAD") == head
 
 
+def test_update_stops_instead_of_overwriting_ignored_local_files(
+    update_repositories, monkeypatch
+):
+    updater, source = update_repositories
+    root = updater.installation.root
+    with (root / ".git/info/exclude").open("a") as exclude:
+        exclude.write("/notes.md\n")
+    (root / "notes.md").write_text("local notes\n")
+    head = git(root, "rev-parse", "HEAD")
+    publish(source, "notes.md")
+    monkeypatch.setattr(updater, "prepare", lambda: None)
+    monkeypatch.setattr(Installation, "register", lambda self: Path("unused"))
+    with pytest.raises(ManagerError, match="notes.md"):
+        updater.update()
+    assert (root / "notes.md").read_text() == "local notes\n"
+    assert git(root, "rev-parse", "HEAD") == head
+
+
 def test_failed_environment_keeps_recovery_record_and_user_data(
     update_repositories, monkeypatch
 ):
