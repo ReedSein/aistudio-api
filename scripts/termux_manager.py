@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from termux_release import ReleaseCheck, check_release
 from termux_runtime import Installation, ManagerError, Service, operation_lock
 from termux_uninstall import Uninstaller
 from termux_update import Updater
@@ -25,6 +26,32 @@ CHOICES = (
 )
 
 
+def release_notice_line(check: ReleaseCheck) -> str:
+    """Compact update line for the menu header."""
+    if check.state == "newer":
+        return f"更新：有新版本 {check.latest}"
+    if check.state == "current":
+        return "更新：已是最新"
+    if check.state == "unpublished":
+        return "更新：尚未发布正式版"
+    if check.state == "unreachable":
+        return "更新：暂时没查到，稍后再试"
+    return "更新：无法确认当前版本"
+
+
+def release_check_message(check: ReleaseCheck) -> str:
+    """Manual 「检查更新」 output for stable installations."""
+    if check.state == "newer":
+        return f"发现新版本 {check.latest}；可在菜单中执行「一键更新」。"
+    if check.state == "current":
+        return f"当前已是最新正式版 {check.current}。"
+    if check.state == "unpublished":
+        return "维护者尚未发布正式版本。"
+    if check.state == "unreachable":
+        return "暂时没查到更新，稍后再试。"
+    return "无法确认当前版本；可执行「一键更新」做完整检查。"
+
+
 def menu(installation: Installation) -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise ManagerError("请在交互式 Termux 窗口运行 aistudio。")
@@ -32,6 +59,9 @@ def menu(installation: Installation) -> None:
         raise ManagerError("缺少菜单工具 gum，请运行 pkg install gum。")
     service = Service(installation)
     children: list[subprocess.Popen[bytes]] = []
+    notice = None
+    if not installation.development:
+        notice = release_notice_line(check_release(installation.root, timeout=3.0))
     while True:
         children[:] = [child for child in children if child.poll() is None]
         running = service.running()
@@ -40,6 +70,8 @@ def menu(installation: Installation) -> None:
             state = "静默运行中" if running.mode == "silent" else "运行中"
         source = "本地开发" if installation.development else "正式发布"
         header = f"AI Studio API · Termux · {source}\n状态：{state}  端口：{installation.port}"
+        if notice is not None:
+            header = f"{header}\n{notice}"
         try:
             selection = subprocess.run(
                 ["gum", "choose", "--header", header, *CHOICES],
@@ -70,10 +102,13 @@ def menu(installation: Installation) -> None:
                         else "服务未运行；过期记录已清理。"
                     )
                 elif action == "检查更新":
-                    status = Updater(installation).check()
-                    print(
-                        f"目标 {status.version}；当前 {status.current[:12]}；远端 {status.available[:12]}；可更新 {status.commits} 个提交。"
-                    )
+                    if installation.development:
+                        status = Updater(installation).check()
+                        print(
+                            f"目标 {status.version}；当前 {status.current[:12]}；远端 {status.available[:12]}；可更新 {status.commits} 个提交。"
+                        )
+                    else:
+                        print(release_check_message(check_release(installation.root)))
                 elif action == "一键更新":
                     reload_menu, foreground = Updater(installation).update()
                 elif (

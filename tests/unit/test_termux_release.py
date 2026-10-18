@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import urllib.error
 from contextlib import nullcontext
@@ -56,3 +57,85 @@ def test_legacy_release_address_is_still_accepted(monkeypatch):
         lambda *_a, **_kw: nullcontext(response),
     )
     assert termux_release.latest_release() == "termux-v1.2.3"
+
+
+def _check_with(monkeypatch, current, latest):
+    monkeypatch.setattr(termux_release, "current_release_tag", lambda _root: current)
+    if isinstance(latest, ManagerError):
+
+        def fail(*_args, **_kwargs):
+            raise latest
+
+        monkeypatch.setattr(termux_release, "latest_release", fail)
+    else:
+        monkeypatch.setattr(
+            termux_release, "latest_release", lambda timeout=30.0: latest
+        )
+    return termux_release.check_release(Path("/nonexistent"))
+
+
+def test_release_check_reports_an_available_update(monkeypatch):
+    check = _check_with(monkeypatch, "termux-v1.0.0", "termux-v1.2.0")
+    assert check.state == "newer"
+    assert check.current == "termux-v1.0.0"
+    assert check.latest == "termux-v1.2.0"
+
+
+def test_release_check_reports_up_to_date(monkeypatch):
+    assert _check_with(monkeypatch, "termux-v1.2.0", "termux-v1.2.0").state == "current"
+    assert _check_with(monkeypatch, "termux-v1.3.0", "termux-v1.2.0").state == "current"
+
+
+def test_release_check_reports_unpublished_and_unreachable(monkeypatch):
+    unpublished = _check_with(
+        monkeypatch, "termux-v1.0.0", termux_release.UnpublishedRelease("fixture")
+    )
+    assert unpublished.state == "unpublished"
+    assert unpublished.latest is None
+    unreachable = _check_with(
+        monkeypatch, "termux-v1.0.0", termux_release.ReleaseLookupError("fixture")
+    )
+    assert unreachable.state == "unreachable"
+    assert unreachable.current == "termux-v1.0.0"
+
+
+def test_release_check_reports_unknown_current_version(monkeypatch):
+    check = _check_with(monkeypatch, None, "termux-v1.2.0")
+    assert check.state == "unknown"
+    assert check.current is None
+
+
+def test_latest_release_passes_the_timeout(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(_url, timeout=None):
+        captured["timeout"] = timeout
+        response = SimpleNamespace(
+            geturl=lambda: termux_release.RELEASE_PREFIX + "termux-v1.0.0"
+        )
+        return nullcontext(response)
+
+    monkeypatch.setattr(termux_release.urllib.request, "urlopen", fake_urlopen)
+    assert termux_release.latest_release(timeout=3.0) == "termux-v1.0.0"
+    assert captured["timeout"] == 3.0
+
+
+def test_current_release_tag_requires_an_exact_tag(tmp_path):
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, text=True, capture_output=True, check=True
+        ).stdout.strip()
+
+    git("init", "--initial-branch=master")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "commit.gpgsign", "false")
+    (tmp_path / "main.py").write_text("# fixture\n")
+    git("add", "main.py")
+    git("commit", "-m", "fixture")
+    git("tag", "termux-v9.9.9")
+    assert termux_release.current_release_tag(tmp_path) == "termux-v9.9.9"
+    (tmp_path / "next.py").write_text("# next\n")
+    git("add", "next.py")
+    git("commit", "-m", "next")
+    assert termux_release.current_release_tag(tmp_path) is None

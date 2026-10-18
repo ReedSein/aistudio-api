@@ -13,6 +13,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+from termux_manager import release_check_message, release_notice_line
+from termux_release import ReleaseCheck
 from termux_runtime import (
     Installation,
     ManagerError,
@@ -667,3 +669,17 @@ def test_public_uninstall_preserves_unpublished_branch_history(installation):
         Uninstaller(target).run()
     assert git(target.root, "rev-parse", "unfinished") == unpublished
     assert (target.root / ".venv").exists()
+
+
+def test_release_notice_lines_cover_all_states():
+    newer = ReleaseCheck("newer", "termux-v1.0.0", "termux-v1.2.0")
+    assert "v1.2.0" in release_notice_line(newer)
+    assert "一键更新" in release_check_message(newer)
+    current = ReleaseCheck("current", "termux-v1.2.0", "termux-v1.2.0")
+    assert "已是最新" in release_notice_line(current)
+    assert "已是最新" in release_check_message(current)
+    assert "尚未发布" in release_notice_line(ReleaseCheck("unpublished", None, None))
+    assert "稍后再试" in release_notice_line(ReleaseCheck("unreachable", None, None))
+    unknown = ReleaseCheck("unknown", None, "termux-v1.2.0")
+    assert "无法确认" in release_notice_line(unknown)
+    assert "无法确认" in release_check_message(unknown)
