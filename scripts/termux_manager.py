@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from termux_legacy import interactive_cleanup
 from termux_release import ReleaseCheck, check_release
 from termux_runtime import Installation, ManagerError, Service, operation_lock
 from termux_uninstall import Uninstaller
@@ -20,6 +21,8 @@ CHOICES = (
     "停止服务",
     "检查更新",
     "一键更新",
+    "清理原版安装",
+    "清理原版安装（清除资料）",
     "卸载（保留数据）",
     "卸载（清除数据）",
     "退出",
@@ -111,6 +114,11 @@ def menu(installation: Installation) -> None:
                         print(release_check_message(check_release(installation.root)))
                 elif action == "一键更新":
                     reload_menu, foreground = Updater(installation).update()
+                elif action in ("清理原版安装", "清理原版安装（清除资料）"):
+                    interactive_cleanup(
+                        clear_data=action == "清理原版安装（清除资料）",
+                        repository_root=installation.root,
+                    )
                 elif (
                     action in ("卸载（保留数据）", "卸载（清除数据）")
                     and Uninstaller(
