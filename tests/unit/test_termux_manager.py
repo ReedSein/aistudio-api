@@ -317,7 +317,7 @@ def test_update_stops_instead_of_overwriting_ignored_local_files(
     publish(source, "notes.md")
     monkeypatch.setattr(updater, "prepare", lambda: None)
     monkeypatch.setattr(Installation, "register", lambda self: Path("unused"))
-    with pytest.raises(ManagerError, match="notes.md"):
+    with pytest.raises(ManagerError, match=r"notes\.md"):
         updater.update()
     assert (root / "notes.md").read_text() == "local notes\n"
     assert git(root, "rev-parse", "HEAD") == head
