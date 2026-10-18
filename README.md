@@ -8,21 +8,21 @@
 
 ## 一键安装
 
-默认安装到 `~/aistudio-api`，与当前所在目录无关：
+默认安装到 `~/aistudio-api-termux`，与当前所在目录无关：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
 ```
 
-指定父目录，例如安装到 `~/projects/aistudio-api`：
+指定父目录，例如安装到 `~/projects/aistudio-api-termux`：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
 安装和更新只使用维护者选定的最新正式发布，日常开发提交不会提供给使用者。正式版本使用 `termux-vX.Y.Z` 标签；首次正式发布前安装链接不可用，获取发布失败时会停止。
 
-再次执行相同安装命令可以续做失败的安装，或在原位置重装并复用保留的数据。已有无关目录、源码修改或其他仓库会明确报错并停止。
+再次执行相同安装命令可以续做失败的安装，或在原位置重装并复用保留的数据。已有无关目录、源码修改或其他仓库会明确报错并停止。仓库更名为 aistudio-api-termux 后，旧地址仍被识别；旧命名的安装重跑新版安装脚本即可接续，原安装目录与浏览器容器继续沿用。
 
 ## 本机开发与测试
 
@@ -47,15 +47,16 @@ aistudio
 - **停止服务**：核对进程身份后正常停止。
 - **检查更新**：检查维护者选定的正式版本；开发用法检查本仓库 `master`。
 - **一键更新**：更新项目、管理脚本、锁定的 Python 依赖和指定浏览器；浏览器版本未变时复用。
+- **清理原版安装**：可选清理原作者旧安装的程序与缓存，默认保留其账号、设置与浏览器登录资料；另有明确的清除资料选项。
 - **卸载**：默认保留配置、账号和统计，也可选择清除本安装数据；显示范围并确认后执行。开发工作区的源码和 Git 记录保留，共享系统工具及浏览器容器保留。
 
-默认访问 `http://127.0.0.1:11451`，在 Web 控制台的账号管理页面导入 Cookie 或凭据包。更新会短暂停机，成功后恢复原运行模式。
+默认访问 `http://127.0.0.1:11451`，在 Web 控制台的账号管理页面导入 Cookie 或凭据包。更新会短暂停机，成功后恢复原运行模式。打开菜单时会短超时检查一次正式版本，相同提示也显示在控制台顶部；检查失败不影响正常使用。
 
 用户配置独立保存在 `~/.config/aistudio-termux/`，账号及统计沿用原有数据目录，更新不会覆盖。Android 仍可能清理后台进程。
 
 ## 维护与文档
 
-使用端只跟随 `ReedSein/aistudio-api`；原作者的改动由维护者评估、测试后再吸收。
+使用端只跟随 `ReedSein/aistudio-api-termux`；原作者的改动由维护者评估、测试后再吸收。
 
 - [安装路径、端口、配置、更新及恢复](./docs/TERMUX.md)
 - [系统架构](./docs/ARCHITECTURE.md)

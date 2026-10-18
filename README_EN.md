@@ -8,21 +8,21 @@ Targets Android ARM64 Termux with an interactive Chinese management menu, one-co
 
 ## Install
 
-The default location is `~/aistudio-api`, independent of the current directory:
+The default location is `~/aistudio-api-termux`, independent of the current directory:
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
 ```
 
-Choose a different parent directory, for example `~/projects/aistudio-api`:
+Choose a different parent directory, for example `~/projects/aistudio-api-termux`:
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
 Public installs and updates use the maintainer-selected latest release, tagged `termux-vX.Y.Z`. Development commits do not change the public version. The install link becomes available after the first formal release; release lookup failures stop installation.
 
-Rerun the same command to resume installation or reinstall at the same location using retained data. Unrelated directories, foreign repositories, and local source edits are preserved and reported.
+Rerun the same command to resume installation or reinstall at the same location using retained data. Unrelated directories, foreign repositories, and local source edits are preserved and reported. After the repository rename to aistudio-api-termux the previous address is still recognised; rerunning the new installer continues an older installation and keeps its existing directory and browser container.
 
 ## Local development and testing
 
@@ -42,9 +42,9 @@ This reuses existing configuration, accounts, data, ports, and the browser conta
 aistudio
 ```
 
-The menu offers foreground start, silent background start, stop, check for updates, update, and uninstall. Public updates follow formal releases; development updates follow this fork's `master`. Ctrl+C stops a foreground service and returns to the menu. A silent service keeps running after the menu exits and writes no service logs or request dumps.
+The menu offers foreground start, silent background start, stop, check for updates, update, uninstall, and an optional cleanup for the original author's installation. Public updates follow formal releases; development updates follow this fork's `master`. Ctrl+C stops a foreground service and returns to the menu. A silent service keeps running after the menu exits and writes no service logs or request dumps. Opening the menu briefly checks the latest formal release, and the console top bar shows the same notice; a failed check never blocks normal use.
 
-Uninstall keeps configuration, accounts, and statistics by default, with a separate option to clear installation data. Both show their scope and require confirmation. Development source and Git history are retained, as are shared system packages and browser containers.
+Uninstall keeps configuration, accounts, and statistics by default, with a separate option to clear installation data. The original-author cleanup likewise keeps accounts, settings, and browser login data unless its explicit clear-data choice is used. Both show their scope and require confirmation. Development source and Git history are retained, as are shared system packages and browser containers.
 
 The default console address is `http://127.0.0.1:11451`. Import Cookies or an account bundle in the Accounts page. Updates cover application and management code, locked Python dependencies, and the declared browser version; an unchanged browser is reused. A running service is stopped briefly and restarted in its previous mode after a successful update.
 
@@ -52,7 +52,7 @@ User configuration lives in `~/.config/aistudio-termux/`; existing account and s
 
 ## Maintenance and documentation
 
-Installations follow `ReedSein/aistudio-api` only. Maintainers evaluate and test changes from the original project before bringing them into this fork.
+Installations follow `ReedSein/aistudio-api-termux` only. Maintainers evaluate and test changes from the original project before bringing them into this fork.
 
 - [Paths, ports, configuration, updates and recovery](./docs/TERMUX.md)
 - [Architecture](./docs/ARCHITECTURE.md)

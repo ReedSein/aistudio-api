@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AI Studio Cookie 抓取推送 (aistudio-api)
-// @namespace    https://github.com/ReedSein/aistudio-api
+// @namespace    https://github.com/ReedSein/aistudio-api-termux
 // @version      0.1.2
 // @description  在 aistudio.google.com 抓取登录 Cookie，推送到自家 aistudio-api 服务并探活导入全部已登录账号
 // @author       ReedSein

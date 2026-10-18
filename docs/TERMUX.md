@@ -8,24 +8,24 @@
 
 | 参数 | 项目位置 |
 |---|---|
-| 默认 | `$HOME/aistudio-api` |
-| `--dir "$HOME/projects"` | `$HOME/projects/aistudio-api` |
+| 默认 | `$HOME/aistudio-api-termux` |
+| `--dir "$HOME/projects"` | `$HOME/projects/aistudio-api-termux` |
 
 目录名称可以包含空格。proot 的路径绑定语法使用冒号分隔，因此安装路径不能包含冒号或换行。使用 Termux 私有目录，避免 Android 共享存储的执行权限限制。
 
 完整安装命令：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
 ```
 
 指定其他父目录时，直接选择下面这一行安装命令：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
-安装器按需安装 Python、Git、uv、curl、ca-certificates、proot-distro、gum，以及构建 CFFI、PyYAML 所需的 clang、pkg-config；创建或复用 `aistudio-api` 浏览器容器，按锁文件同步依赖，并安装 `aistudio` 命令。已有安装可再次运行相同命令续做；它不会自动覆盖源码修改，也不会替换其他仓库。
+安装器按需安装 Python、Git、uv、curl、ca-certificates、proot-distro、gum，以及构建 CFFI、PyYAML 所需的 clang、pkg-config；创建或复用 `aistudio-api-termux` 浏览器容器（已登记的旧安装继续沿用其原有容器），按锁文件同步依赖，并安装 `aistudio` 命令。已有安装可再次运行相同命令续做；它不会自动覆盖源码修改，也不会替换其他仓库。
 
 普通安装只取本 fork 最新正式 Release 对应的代码，安装脚本也来自正式发布附件。首次正式发布前，以上链接不可用；没有发布或联网失败时明确停止。
 
@@ -44,7 +44,7 @@ aistudio
 需要新建开发安装时，从 `master` 获取安装器并显式带上 `--dev`：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dev --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api-termux/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dev --dir "$HOME/projects"
 ```
 
 只有目录尚不存在时才克隆 `master`。菜单会显示“本地开发”；主动更新跟随本 fork 的 `master`，存在源码修改、本地领先提交或分叉时保留本地工作并停止更新。在其他开发分支中自行用 Git 管理源码，启动和停止不受影响。
@@ -62,8 +62,10 @@ aistudio
 | 普通启动 | 在当前窗口显示日志；Ctrl+C 停止服务并返回菜单 |
 | 静默启动 | 后台运行；丢弃标准输出和错误，不写服务日志或请求转储 |
 | 停止服务 | 核对进程身份和启动时间后停止；过期记录不会触发误杀 |
-| 检查更新 | 普通安装检查维护者选定的正式发布；开发用法检查本 fork 的 `master` |
+| 检查更新 | 普通安装轻量检查维护者选定的正式发布，不拉取源码；开发用法检查本 fork 的 `master` |
 | 一键更新 | 更新应用、菜单、安装适配、锁定依赖及指定浏览器 |
+| 清理原版安装 | 可选清理原作者旧安装的程序与缓存，默认保留其资料；先预览再确认 |
+| 清理原版安装（清除资料） | 在上者基础上删除账号、设置与浏览器登录资料，删除不可恢复 |
 | 卸载（保留数据） | 移除程序、运行环境、浏览器缓存和入口，保留配置、账号及统计 |
 | 卸载（清除数据） | 额外清除明确列出的本安装配置和数据，确认后执行 |
 
@@ -83,7 +85,7 @@ aistudio --register --port 11451
 
 | 内容 | 默认位置 |
 |---|---|
-| 安装路径、菜单端口和开发用法 | `~/.config/aistudio-termux/installation.json` |
+| 安装路径、菜单端口、开发用法与浏览器容器 | `~/.config/aistudio-termux/installation.json` |
 | 应用配置 | `~/.config/aistudio-termux/config.yaml` |
 | 进程记录和操作锁 | `~/.local/state/aistudio-termux/` |
 | 账号、Cookie、统计和历史 | 项目已有的 `data/`，或原先配置的数据路径 |
@@ -92,9 +94,11 @@ aistudio --register --port 11451
 
 ## 更新规则与失败恢复
 
-产品更新来源固定为此 fork，原作者的改动由维护者评估、测试后再吸收。菜单不会自动同步原作者分支。
+产品更新来源固定为此 fork，原作者的改动由维护者评估、测试后再吸收。菜单不会自动同步原作者分支。仓库已改名为 `aistudio-api-termux`：安装器与更新器继续识别旧地址，旧命名的安装重跑新版安装脚本即可接续，原源码目录、浏览器容器及 `aistudio` 命令不变；新安装使用 `aistudio-api-termux` 源码目录与同名浏览器容器，不复用原作者遗留环境。
 
 公开安装和更新以维护者标为最新正式版的 GitHub Release 为准，标签格式为 `termux-vX.Y.Z`；普通标签、草稿和预发布不作为正式版。一次更新选定版本后固定到其具体 Git 提交，日常推送 `master` 不影响公开版本。旧的 `master` 安装仅在能安全向前更新到正式版本时迁移；领先于正式版时不会自动降级或重置，可继续登记为开发用法。
+
+打开管理菜单时会用约 3 秒的短超时检查一次最新正式版本，网页控制台进入时也会异步检查并显示在顶部；两处使用同一版本判断，只查询发布信息，不拉取源码、不要求本地干净、不参与模型请求。查询失败时提示暂时没查到，不影响正常使用；开发用法显示为本地开发，不按正式版判断。
 
 Python 依赖版本由仓库内的 `uv.lock` 维护，使用端执行锁定同步。浏览器版本在 `scripts/cloakbrowser.version` 中维护；版本未变化时不重复下载，旧版本缓存保留。
 
@@ -121,6 +125,23 @@ aistudio --uninstall --clear-data
 - 默认保留独立配置、安装路径登记，以及项目的 `data/`、`dumps/`、`server-logs/` 和 `.env`。在原安装位置重跑同一种安装命令，可以继续使用这些配置和数据。
 - 清除数据选项额外删除上述项目内数据，以及管理器的 `config.yaml` 和 `installation.json`。删除不可自动恢复；开发工作区中作为源码保留的配置模板不受影响。
 - 共享 Termux 系统包、proot 浏览器容器和自定义外部数据路径保留。目录若是符号链接，只移除链接本身，不递归删除外部目标；未接管文件和操作锁可能使项目／状态目录继续存在。
+
+## 清理原版安装
+
+原作者脚本安装失败、改用本分支时，可以清理旧安装：
+
+```bash
+bash scripts/install-termux.sh --clean-legacy
+# 连资料一起删除：
+bash scripts/install-termux.sh --clean-legacy --clear-data
+```
+
+菜单中的「清理原版安装」两项与此共用同一套清理逻辑。
+
+- 默认删除原安装的程序文件、Python 环境、浏览器缓存、自动生成的 uv.toml 与 Git 记录，保留 `config.yaml`、账号与统计、浏览器登录资料及未接管的本地文件。
+- 「清除资料」选项额外删除 `data/`（含账号、统计与浏览器登录资料）、`dumps/`、`server-logs/`、`.env` 与 `config.yaml`，删除不可恢复；配置在项目外的数据目录不会被触碰。
+- 原名 `aistudio-api` 的浏览器容器单独列入预览：本分支仍在使用或有进程占用时保留，其他情况确认后删除；其他容器、共享镜像与全局缓存不动。
+- 执行前核对目录的 Git 来源必须是原作者仓库，并列出实际删除与保留范围，输入 CLEAN 才执行；目录不存在、来源不符、疑似仍在运行或指向已登记安装时会停止并说明；取消不会删除任何内容。
 
 ## 发布正式版本
 
