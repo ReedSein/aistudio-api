@@ -18,7 +18,6 @@ dumps/
 .env
 uv.toml
 .uv.toml
-uv.lock
 /test_*
 /capture_*
 chromium-profile/

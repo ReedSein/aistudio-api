@@ -64,6 +64,10 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[[tool.uv.index]]
+name = "tur"
+url = "https://termux-user-repository.github.io/pypi/"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = [

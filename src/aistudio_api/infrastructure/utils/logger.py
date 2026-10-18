@@ -69,6 +69,8 @@ def is_dump_to_file_enabled() -> bool:
     3. config.yaml 中 logging.dump_to_file
     4. 当 dump_requests 开启时，若 dump_to_file 未显式禁用则默认开启
     """
+    if os.getenv("AISTUDIO_SILENT") == "1":
+        return False
     global _dump_to_file_override
     if _dump_to_file_override is not None:
         return _dump_to_file_override
@@ -185,6 +187,8 @@ def is_dump_requests_enabled() -> bool:
     2. DEBUG / AISTUDIO_DEBUG 环境变量
     3. config.yaml 中 logging.dump_requests 配置
     """
+    if os.getenv("AISTUDIO_SILENT") == "1":
+        return False
     global _dump_requests_override
     if _dump_requests_override is not None:
         return _dump_requests_override

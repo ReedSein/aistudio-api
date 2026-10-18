@@ -9,34 +9,41 @@
 #   - macOS (Apple Silicon / Intel) / Windows: Verifies installed system Chrome/Chromium/Edge.
 #
 # Flags:
-#   --project-root PATH      where to place .cloakbrowser (default: cwd)
+#   --project-root PATH      where to place .cloakbrowser (default: this project)
 #   --proot-name NAME        container name for Termux (default: aistudio-api)
 #   --proot-distro IMAGE     OCI image for Termux (default: ubuntu:24.04)
-#   --chromium-version VER   CloakBrowser version (default: 146.0.7680.177.3)
 #   --skip-proot-install     don't create/update proot container
 #   --skip-browser-download  don't re-fetch CloakBrowser tarball
 
 set -euo pipefail
 
-PROJECT_ROOT="$(pwd)"
-PROOT_NAME="aistudio-api"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROOT_NAME="${AISTUDIO_PROOT_NAME:-aistudio-api}"
 PROOT_IMAGE="ubuntu:24.04"
-CHROMIUM_VERSION="146.0.7680.177.4"
+read -r CHROMIUM_VERSION < "${SCRIPT_DIR}/cloakbrowser.version"
 SKIP_PROOT=0
 SKIP_BROWSER=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --project-root) PROJECT_ROOT="$2"; shift 2 ;;
-        --proot-name) PROOT_NAME="$2"; shift 2 ;;
-        --proot-distro) PROOT_IMAGE="$2"; shift 2 ;;
-        --chromium-version) CHROMIUM_VERSION="$2"; shift 2 ;;
+        --project-root|--proot-name|--proot-distro)
+            [[ $# -ge 2 && -n "$2" ]] || { echo "missing value: $1" >&2; exit 2; }
+            case "$1" in
+                --project-root) PROJECT_ROOT="$2" ;;
+                --proot-name) PROOT_NAME="$2" ;;
+                --proot-distro) PROOT_IMAGE="$2" ;;
+            esac
+            shift 2 ;;
         --skip-proot-install) SKIP_PROOT=1; shift ;;
         --skip-browser-download) SKIP_BROWSER=1; shift ;;
         -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
     esac
 done
+
+[[ "${CHROMIUM_VERSION}" =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "invalid browser version" >&2; exit 2; }
+[[ "${PROOT_NAME}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo "invalid container name" >&2; exit 2; }
 
 PROJECT_ROOT="$(cd "${PROJECT_ROOT}" && pwd)"
 CLOAK_ROOT="${PROJECT_ROOT}/.cloakbrowser"
@@ -65,7 +72,8 @@ setup_termux() {
     fi
 
     # 1. proot container
-    if { proot-distro list 2>&1 1>/dev/null || true; } | grep -qE "[[:space:]]\\*?[[:space:]]*${PROOT_NAME}([[:space:]]|$)"; then
+    CONTAINERS="$(proot-distro list --quiet)"
+    if grep -Fxq -- "${PROOT_NAME}" <<< "${CONTAINERS}"; then
         log "Container '${PROOT_NAME}' already exists; skipping container creation."
     elif [[ ${SKIP_PROOT} -eq 1 ]]; then
         log "--skip-proot-install set but container missing; aborting."
@@ -81,17 +89,26 @@ setup_termux() {
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
         export TZ=UTC
-        dpkg --configure -a >/dev/null 2>&1 || true
-        apt-get install -y --no-install-recommends \
+        packages=( \
             ca-certificates curl \
             libnss3 libnspr4 libgbm1 libasound2t64 \
             libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 \
             libxfixes3 libxext6 libxrender1 libx11-6 libxcb1 \
-            libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 \
-            libgtk-3-0 libnotify4 fonts-liberation libpangocairo-1.0-0 \
-            fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont fonts-wqy-zenhei
-        apt-get clean
-        rm -rf /var/lib/apt/lists/*
+            libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
+            libgtk-3-0t64 libnotify4 fonts-liberation libpangocairo-1.0-0 \
+            fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont fonts-wqy-zenhei )
+        missing=()
+        for package in "${packages[@]}"; do
+            if [[ "$(dpkg-query -W -f="\${db:Status-Status}" "$package" 2>/dev/null || true)" != installed ]]; then
+                missing+=("$package")
+            fi
+        done
+        if [[ ${#missing[@]} -gt 0 ]]; then
+            apt-get update
+            apt-get install -y --no-install-recommends "${missing[@]}"
+            apt-get clean
+        fi
+        mkdir -p /opt/cloakbrowser
     '
 
     # 3. CloakBrowser download
@@ -106,38 +123,19 @@ setup_termux() {
         exit 1
     else
         log "Downloading CloakBrowser ARM64 (~200MB)..."
-        TMP="$(mktemp -d)"
+        [[ -n "${TMPDIR:-}" && -w "${TMPDIR}" ]] || { log "TMPDIR must be writable."; exit 1; }
+        TMP="$(mktemp -d "${TMPDIR%/}/aistudio-browser.XXXXXX")"
         trap 'rm -rf "${TMP}"' EXIT
-        if command -v curl >/dev/null 2>&1; then
-            curl -fSL --retry 3 -o "${TMP}/${ARCHIVE_NAME}" "${DOWNLOAD_URL}"
-        else
-            proot-distro login "${PROOT_NAME}" -- curl -fSL --retry 3 -o "/tmp/${ARCHIVE_NAME}" "${DOWNLOAD_URL}"
-            proot-distro copy "${PROOT_NAME}:/tmp/${ARCHIVE_NAME}" "${TMP}/${ARCHIVE_NAME}"
-        fi
-        tar -xzf "${TMP}/${ARCHIVE_NAME}" -C "${CLOAK_ROOT}"
-        INNER="$(find "${CLOAK_ROOT}" -mindepth 2 -maxdepth 2 -type d -name 'chromium-*' | head -1 || true)"
-        if [[ -n "${INNER}" && "${INNER}" != "${CHROME_DIR_HOST}" ]]; then
-            mv "${INNER}" "${CHROME_DIR_HOST}"
-        fi
+        curl --proto '=https' --tlsv1.2 -fSL --retry 3 -o "${TMP}/${ARCHIVE_NAME}" "${DOWNLOAD_URL}"
+        uv run --no-sync --no-python-downloads --project "${PROJECT_ROOT}" python \
+            "${SCRIPT_DIR}/unpack_browser.py" "${TMP}/${ARCHIVE_NAME}" "${CHROME_DIR_HOST}"
         log "CloakBrowser extracted to ${CHROME_DIR_HOST}"
     fi
 
-    # 4. Stage chrome tree into the container
-    PROOT_CHROME_DIR="/opt/cloakbrowser"
-    if proot-distro login "${PROOT_NAME}" -- test -x "${PROOT_CHROME_DIR}/chrome"; then
-        log "CloakBrowser already staged inside container at ${PROOT_CHROME_DIR}."
-    else
-        log "Staging chrome tree into container at ${PROOT_CHROME_DIR}..."
-        proot-distro login "${PROOT_NAME}" -- bash -c "rm -rf '/opt/$(basename "${CHROME_DIR_HOST}")'"
-        proot-distro copy -r "${CHROME_DIR_HOST}" "${PROOT_NAME}:/opt/$(basename "${CHROME_DIR_HOST}")"
-        proot-distro login "${PROOT_NAME}" -- bash -c "
-            rm -rf '${PROOT_CHROME_DIR}'
-            mv '/opt/$(basename "${CHROME_DIR_HOST}")' '${PROOT_CHROME_DIR}'
-        "
-        log "CloakBrowser staging complete."
-    fi
-
-    log "Smoke test: bash scripts/cloakbrowser_termux/run-chrome.sh --version"
+    # The launcher binds this exact cached version into /opt/cloakbrowser.
+    # No second browser copy inside the container can become stale.
+    CLOAKBROWSER_PROJECT_DIR="${PROJECT_ROOT}" AISTUDIO_PROOT_NAME="${PROOT_NAME}" \
+        bash "${SCRIPT_DIR}/cloakbrowser_termux/run-chrome.sh" --version
 }
 
 # ==============================================================================

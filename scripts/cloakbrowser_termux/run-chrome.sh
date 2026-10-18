@@ -30,15 +30,11 @@ fi
 
 CLOAK_ROOT="${CLOAKBROWSER_PROJECT_DIR}/.cloakbrowser"
 
-CHROME_BIN=""
-for d in $(ls -1d "${CLOAK_ROOT}"/chromium-* 2>/dev/null | sort -V); do
-    if [[ -x "${d}/chrome" ]]; then
-        CHROME_BIN="${d}/chrome"
-        break
-    fi
-done
+read -r CHROMIUM_VERSION < "${CLOAKBROWSER_PROJECT_DIR}/scripts/cloakbrowser.version"
+[[ "${CHROMIUM_VERSION}" =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "invalid browser version" >&2; exit 2; }
+CHROME_BIN="${CLOAK_ROOT}/chromium-${CHROMIUM_VERSION}/chrome"
 
-if [[ -z "${CHROME_BIN}" || ! -f "${CHROME_BIN}" ]]; then
+if [[ ! -x "${CHROME_BIN}" ]]; then
     cat >&2 <<EOF
 [run-chrome] No CloakBrowser binary found in ${CLOAK_ROOT}.
 
@@ -56,7 +52,8 @@ EOF
     exit 127
 fi
 
-if ! { proot-distro list 2>&1 1>/dev/null || true; } | grep -qE "[[:space:]]\\*?[[:space:]]*${AISTUDIO_PROOT_NAME}([[:space:]]|$)"; then
+CONTAINERS="$(proot-distro list --quiet)"
+if ! grep -Fxq -- "${AISTUDIO_PROOT_NAME}" <<< "${CONTAINERS}"; then
     cat >&2 <<EOF
 [run-chrome] proot container '${AISTUDIO_PROOT_NAME}' is missing. Install once:
     bash scripts/setup-browser.sh --project-root "${CLOAKBROWSER_PROJECT_DIR}"
@@ -91,11 +88,11 @@ PROOT_UDD=""
 if [[ -n "${UDD_HOST}" ]]; then
     PROOT_UDD="${PROOT_HOME}/.chrome-profile"
     BIND_ARGS+=("--bind" "${UDD_HOST}:${PROOT_UDD}")
+    ARGS=("--user-data-dir=${PROOT_UDD}" "${ARGS[@]}")
 fi
 exec proot-distro login "${AISTUDIO_PROOT_NAME}" \
     --work-dir "${PROOT_CHROME_DIR}" \
     "${BIND_ARGS[@]}" \
     --env HOME="${PROOT_HOME}" \
     -- "${PROOT_CHROME_BIN}" \
-        ${UDD_HOST:+--user-data-dir="${PROOT_UDD}"} \
         "${ARGS[@]}"
