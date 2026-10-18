@@ -24,18 +24,18 @@
         }
     }
 
-    const timeoutMs = (args.timeout || 60) * 1000;
-    let timeoutId = setTimeout(() => {
+    // args.timeout === 0 表示不超时：不设定时器，仅由显式中止、上游错误或页面关闭结束
+    const timeoutMs = args.timeout === 0 ? null : (args.timeout || 60) * 1000;
+    const onTimeout = () => {
         push({type: 'error', message: 'timeout'});
         doAbort();
-    }, timeoutMs);
+    };
+    let timeoutId = timeoutMs === null ? null : setTimeout(onTimeout, timeoutMs);
 
     function resetTimeout() {
+        if (timeoutMs === null) return;
         clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => {
-            push({type: 'error', message: 'timeout'});
-            doAbort();
-        }, timeoutMs);
+        timeoutId = setTimeout(onTimeout, timeoutMs);
     }
 
     function cleanup() {

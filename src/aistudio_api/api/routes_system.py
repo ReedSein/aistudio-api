@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aistudio_api.api.dependencies import get_runtime_state
 from aistudio_api.api.response_models import (
@@ -18,7 +18,10 @@ from aistudio_api.api.response_models import (
 )
 from aistudio_api.infrastructure.gateway.model_defaults import (
     _resolve_config_path,
+    apply_configured_runtime_settings,
+    get_runtime_env_overrides,
     invalidate_config_cache,
+    update_configured_runtime_settings,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -198,7 +201,9 @@ class ConfigYamlUpdateRequest(BaseModel):
 
 
 @protected_router.get("/config")
-async def get_system_config() -> dict[str, object]:
+async def get_system_config(
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> dict[str, object]:
     """获取系统运行配置与 config.yaml 内容。"""
     from aistudio_api.config import settings
     from aistudio_api.infrastructure.utils.logger import (
@@ -215,12 +220,15 @@ async def get_system_config() -> dict[str, object]:
         with contextlib.suppress(Exception):
             yaml_content = config_yaml_path.read_text(encoding="utf-8")
     return {
-        "port": settings.port,
+        "port": runtime_state.port,
         "browser_port": settings.browser_port,
         "browser_headless": settings.browser_headless,
         "proxy_configured": bool(settings.proxy_url),
         "auth_enabled": settings.auth_enabled,
         "timeout_stream": settings.timeout_stream,
+        "timeout_replay": settings.timeout_replay,
+        "browser_idle_timeout": settings.browser_idle_timeout,
+        "env_overrides": get_runtime_env_overrides(),
         "yaml_content": yaml_content,
         "log_level": get_log_level(),
         "dump_requests": is_dump_requests_enabled(),
@@ -263,6 +271,11 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
                     set_dump_to_file(bool(raw_logging["dump_to_file"]))
                 if "dump_dir" in raw_logging:
                     set_dump_dir(str(raw_logging["dump_dir"]))
+
+        from aistudio_api.config import settings
+
+        apply_configured_runtime_settings(settings)
+
         logger.info("配置文件 config.yaml 已更新并重新加载")
         return {"ok": True, "message": "配置已保存并重载"}
     except Exception as e:
@@ -324,6 +337,48 @@ async def update_logging_config(req: LoggingConfigRequest) -> dict[str, object]:
         "debug_env_active": is_debug_env_active(),
         "dump_to_file": is_dump_to_file_enabled(),
         "dump_dir": str(get_dump_dir()),
+    }
+
+
+class RuntimeConfigRequest(BaseModel):
+    """运行参数更新请求；0 表示不超时 / 不自动回收。"""
+
+    timeout_stream: int | None = Field(default=None, ge=0, le=86400)
+    timeout_replay: int | None = Field(default=None, ge=0, le=86400)
+    browser_idle_timeout: int | None = Field(default=None, ge=0, le=86400)
+
+
+@protected_router.put("/config/runtime")
+async def update_runtime_config(req: RuntimeConfigRequest) -> dict[str, object]:
+    """更新服务运行参数并持久化到 config.yaml，保存即对后续请求生效。
+
+    环境变量仅决定进程启动时的初值；界面保存的值即时生效，
+    下次启动时若环境变量仍显式设置，则重新以环境变量优先。
+    """
+    from aistudio_api.config import settings
+
+    update_configured_runtime_settings(
+        timeout_stream=req.timeout_stream,
+        timeout_replay=req.timeout_replay,
+        browser_idle_timeout=req.browser_idle_timeout,
+    )
+    for key in ("timeout_stream", "timeout_replay", "browser_idle_timeout"):
+        value = getattr(req, key)
+        if value is not None:
+            setattr(settings, key, value)
+
+    logger.info(
+        "运行参数已更新: 流式静默超时=%s 秒, 非流式请求超时=%s 秒, 浏览器空闲回收=%s 秒",
+        settings.timeout_stream,
+        settings.timeout_replay,
+        settings.browser_idle_timeout,
+    )
+    return {
+        "ok": True,
+        "timeout_stream": settings.timeout_stream,
+        "timeout_replay": settings.timeout_replay,
+        "browser_idle_timeout": settings.browser_idle_timeout,
+        "env_overrides": get_runtime_env_overrides(),
     }
 
 

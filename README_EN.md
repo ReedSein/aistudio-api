@@ -30,7 +30,7 @@ aistudio
 
 The menu offers foreground start, silent background start, stop, check for updates, and update. Ctrl+C stops a foreground service and returns to the menu. A silent service keeps running after the menu exits and writes no service logs or request dumps.
 
-The default console address is `http://127.0.0.1:8000`. Import Cookies or an account bundle in the Accounts page. Updates cover application and management code, locked Python dependencies, and the declared browser version; an unchanged browser is reused. A running service is stopped briefly and restarted in its previous mode after a successful update.
+The default console address is `http://127.0.0.1:11451`. Import Cookies or an account bundle in the Accounts page. Updates cover application and management code, locked Python dependencies, and the declared browser version; an unchanged browser is reused. A running service is stopped briefly and restarted in its previous mode after a successful update.
 
 User configuration lives in `~/.config/aistudio-termux/`; existing account and statistics data remain in their original locations. Android may still terminate background processes.
 
@@ -57,7 +57,7 @@ Supported authentication methods:
 <summary><b>1. List Models</b></summary>
 
 ```bash
-curl http://localhost:8000/v1beta/models \
+curl http://localhost:11451/v1beta/models \
   -H "x-goog-api-key: your-api-key"
 ```
 </details>
@@ -66,7 +66,7 @@ curl http://localhost:8000/v1beta/models \
 <summary><b>2. Generate Content (Non-streaming)</b></summary>
 
 ```bash
-curl http://localhost:8000/v1beta/models/gemini-3.7-flash:generateContent \
+curl http://localhost:11451/v1beta/models/gemini-3.7-flash:generateContent \
   -H "x-goog-api-key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -84,7 +84,7 @@ curl http://localhost:8000/v1beta/models/gemini-3.7-flash:generateContent \
 <summary><b>3. Stream Generate Content (SSE)</b></summary>
 
 ```bash
-curl http://localhost:8000/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
+curl http://localhost:11451/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
   -H "x-goog-api-key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -111,7 +111,7 @@ client = genai.Client(
     api_key="your-api-key",
     http_options={
         "api_version": "v1beta",
-        "base_url": "http://localhost:8000",
+        "base_url": "http://localhost:11451",
     },
 )
 
@@ -143,7 +143,7 @@ client = genai.Client(
     api_key="your-api-key",
     http_options={
         "api_version": "v1beta",
-        "base_url": "http://localhost:8000",
+        "base_url": "http://localhost:11451",
     },
 )
 
@@ -188,7 +188,7 @@ if response.function_calls:
 
 ## Web Management Console
 
-The service includes a built-in static Web Console served at `http://localhost:8000`:
+The service includes a built-in static Web Console served at `http://localhost:11451`:
 
 - **Dashboard**: Real-time view of service health, per-model request stats, success rates, and rate-limit cooldown status.
 - **Accounts**: Import Cookie credentials (single text or bundle files), auto-probe multiple accounts, switch the active account, or reset rate limits.

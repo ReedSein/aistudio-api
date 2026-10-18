@@ -49,6 +49,9 @@ def menu(installation: Installation) -> None:
                 elif action == "静默启动":
                     children.append(service.start("silent"))
                     print("已在后台启动，不保存服务日志。")
+                    print(
+                        f"控制台地址: http://localhost:{installation.port}/", flush=True
+                    )
                 elif action == "停止服务":
                     print(
                         "服务已停止。"
@@ -92,7 +95,7 @@ def main() -> int:
     )
     setup.add_argument("--install", action="store_true", help="准备运行环境并登记安装")
     parser.add_argument("--project-root", type=Path, help="登记的项目路径")
-    parser.add_argument("--port", type=int, help="服务端口，默认 8000")
+    parser.add_argument("--port", type=int, help="服务端口，默认 11451")
     args = parser.parse_args()
     try:
         installation = Installation.load(args.project_root, args.port)

@@ -188,3 +188,88 @@ async def test_transport_abort_stream_by_rid():
         await task2
 
     assert transport.in_flight_count == 0
+
+
+@pytest.mark.asyncio
+async def test_transport_unlimited_streaming_ignores_deadline():
+    """timeout_ms=0 表示不超时：静默超过 1 秒仍继续等待，直到 done 到达。"""
+    transport = XHRStreamTransport()
+    page = MagicMock(spec=CDPPage)
+    binding_listener = None
+
+    def mock_on_binding(name: str, callback):
+        nonlocal binding_listener
+        if name == "__aistudio_stream_push__":
+            binding_listener = callback
+
+    page.on_binding = MagicMock(side_effect=mock_on_binding)
+    page.add_binding = AsyncMock()
+
+    captured_rid = None
+    captured_timeout = None
+
+    async def fake_evaluate(expr, args=None, *a, **kw):
+        nonlocal captured_rid, captured_timeout
+        if isinstance(args, dict) and "rid" in args:
+            captured_rid = args["rid"]
+            captured_timeout = args.get("timeout")
+        return
+
+    page.evaluate = AsyncMock(side_effect=fake_evaluate)
+
+    async def push_events():
+        while captured_rid is None or binding_listener is None:
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(1.2)
+        binding_listener(
+            json.dumps({"rid": captured_rid, "type": "status", "status": 200})
+        )
+        binding_listener(
+            json.dumps({"rid": captured_rid, "type": "chunk", "text": "deep thinking"})
+        )
+        binding_listener(json.dumps({"rid": captured_rid, "type": "done"}))
+
+    push_task = asyncio.create_task(push_events())
+
+    collected = []
+    async for tag, payload in transport.send_streaming_request(
+        page,
+        url="http://test.com",
+        headers={},
+        body="{}",
+        timeout_ms=0,
+    ):
+        collected.append((tag, payload))
+    await push_task
+
+    assert captured_timeout == 0.0
+    assert ("status", 200) in collected
+    assert ("chunk", b"deep thinking") in collected
+
+
+@pytest.mark.asyncio
+async def test_transport_unlimited_hooked_request_disables_timers():
+    """timeout_ms=0 时 JS 侧收到 0（不设计时器），Python 侧 evaluate 不设截止时间。"""
+    transport = XHRStreamTransport()
+    page = MagicMock(spec=CDPPage)
+    captured: dict = {}
+
+    async def fake_evaluate(expr, args=None, *a, **kw):
+        captured["args"] = args
+        captured.update(kw)
+        return {"status": 200, "body": "ok"}
+
+    page.evaluate = AsyncMock(side_effect=fake_evaluate)
+
+    status, raw = await transport.send_hooked_request(
+        page,
+        url="http://test.com",
+        headers={},
+        body="{}",
+        timeout_ms=0,
+    )
+
+    assert status == 200
+    assert raw == b"ok"
+    assert captured["args"]["timeout"] == 0.0
+    assert captured["timeout_s"] == float("inf")

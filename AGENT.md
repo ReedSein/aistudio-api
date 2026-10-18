@@ -40,7 +40,7 @@ uv sync
 bash scripts/setup-browser.sh
 
 # 3. 启动服务
-uv run python3 main.py server --port 8080
+uv run python3 main.py server
 ```
 
 > [!NOTE]
@@ -231,7 +231,7 @@ aistudio-api/
 │   │   ├── account/               # Cookie 解析、会话刷新与凭据持久化 (account_store, cookie_parser)
 │   │   ├── browser/               # 异步 CDP 客户端与 CloakBrowser 进程管理 (cdp_client, browser_engine)
 │   │   └── gateway/               # 会话状态机 (session_state)、蓝绿就绪门 (session)、鉴权凭据 (session_auth)、WAA探针 (botguard_bootstrap)、Wire编解码与流式管道
-├── config.yaml                    # 模型规则与工具默认行为配置 (支持在线热重载)
+├── config.yaml                    # 模型规则、运行参数与工具默认行为配置 (支持在线热重载)
 ├── main.py                        # 本地统一启动入口
 └── tests/                        # 单元测试套件 (模块化轻量架构，全量通过 <5s)
 │   ├── conftest.py               # 气密性隔离配置 (monkeypatch AISTUDIO_* 数据目录)

@@ -340,3 +340,8 @@ def test_network_failure_is_reported(update_repositories):
     updater.repository = str(updater.installation.root / "missing.git")
     with pytest.raises(ManagerError, match="Git 操作失败"):
         updater.check()
+
+
+def test_installation_default_port_is_11451():
+    installation = Installation(Path("/nonexistent"), Path("/cfg"), Path("/state"))
+    assert installation.port == 11451

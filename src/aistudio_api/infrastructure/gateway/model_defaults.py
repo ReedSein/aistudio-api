@@ -536,3 +536,90 @@ def update_configured_logging_settings(
     )
     invalidate_config_cache()
     return logging_dict
+
+
+RUNTIME_TIMEOUT_KEYS: tuple[tuple[str, str], ...] = (
+    ("timeout_stream", "AISTUDIO_TIMEOUT_STREAM"),
+    ("timeout_replay", "AISTUDIO_TIMEOUT_REPLAY"),
+    ("browser_idle_timeout", "AISTUDIO_BROWSER_IDLE_TIMEOUT"),
+)
+
+
+def get_runtime_env_overrides() -> list[str]:
+    """列出被显式环境变量覆盖的运行参数名（供前端提示）。"""
+    return [
+        name
+        for name, env_name in RUNTIME_TIMEOUT_KEYS
+        if os.getenv(env_name) not in (None, "")
+    ]
+
+
+def get_configured_runtime_settings(
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, int]:
+    """获取 config.yaml 中 runtime 段的显式配置项；未写入的键不会出现在返回值里。"""
+    resolved_path = _resolve_config_path(config_path)
+    config = _load_yaml_config(resolved_path)
+    raw_runtime = config.get("runtime")
+    configured: dict[str, int] = {}
+    if isinstance(raw_runtime, dict):
+        for key, _env_name in RUNTIME_TIMEOUT_KEYS:
+            value = raw_runtime.get(key)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise ValueError(f"runtime.{key} 必须是非负数字，当前值: {value!r}")
+            try:
+                number = int(float(value))
+            except ValueError as exc:
+                raise ValueError(
+                    f"runtime.{key} 必须是非负数字，当前值: {value!r}"
+                ) from exc
+            if number < 0:
+                raise ValueError(f"runtime.{key} 必须是非负数字，当前值: {value!r}")
+            configured[key] = number
+    return configured
+
+
+def apply_configured_runtime_settings(
+    settings_obj: object,
+    config_path: str | os.PathLike[str] | None = None,
+) -> None:
+    """把 config.yaml runtime 段应用到 settings 对象；环境变量显式设置时优先。"""
+    configured = get_configured_runtime_settings(config_path)
+    for key, env_name in RUNTIME_TIMEOUT_KEYS:
+        if key in configured and os.getenv(env_name) in (None, ""):
+            setattr(settings_obj, key, configured[key])
+
+
+def update_configured_runtime_settings(
+    timeout_stream: int | None = None,
+    timeout_replay: int | None = None,
+    browser_idle_timeout: int | None = None,
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, int]:
+    """更新 config.yaml 中的 runtime 设置并刷新缓存。"""
+    resolved_path = _resolve_config_path(config_path)
+    content = (
+        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
+    )
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    raw_runtime = parsed.get("runtime")
+    runtime_dict = dict(raw_runtime) if isinstance(raw_runtime, dict) else {}
+    if timeout_stream is not None:
+        runtime_dict["timeout_stream"] = timeout_stream
+    if timeout_replay is not None:
+        runtime_dict["timeout_replay"] = timeout_replay
+    if browser_idle_timeout is not None:
+        runtime_dict["browser_idle_timeout"] = browser_idle_timeout
+
+    parsed["runtime"] = runtime_dict
+    resolved_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    invalidate_config_cache()
+    return get_configured_runtime_settings(resolved_path)

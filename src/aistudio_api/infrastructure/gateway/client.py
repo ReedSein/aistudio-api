@@ -156,7 +156,7 @@ class AIStudioClient:
             force_refresh=force_refresh,
         )
 
-    async def replay(self, body: str, timeout: int = 120) -> tuple[int, bytes]:
+    async def replay(self, body: str, timeout: int | None = None) -> tuple[int, bytes]:
         return await self._replay_service.replay(
             self._captured, body=body, timeout=timeout
         )
@@ -326,7 +326,7 @@ class AIStudioClient:
 
             modified_body = captured.body
             status, raw = await self._replay_service.replay(
-                captured, body=modified_body, timeout=120
+                captured, body=modified_body
             )
             raw_text = raw.decode("utf-8", errors="replace")
             self._dump_raw_exchange(

@@ -161,7 +161,8 @@ class XHRStreamTransport:
         auth_user: str = "0",
     ) -> tuple[int, bytes]:
         """Replay request via XHR inside the browser page context."""
-        timeout_s = timeout_ms / 1000
+        unlimited = timeout_ms <= 0
+        timeout_s = 0.0 if unlimited else timeout_ms / 1000
         clean_headers = await _ensure_authorization_header(
             page, headers, auth_user=auth_user
         )
@@ -172,7 +173,10 @@ class XHRStreamTransport:
             timeout_s=timeout_s,
         )
 
-        result = await page.evaluate(HOOKED_REQUEST_JS, args, timeout_s=timeout_s + 5.0)
+        evaluate_timeout_s = float("inf") if unlimited else timeout_s + 5.0
+        result = await page.evaluate(
+            HOOKED_REQUEST_JS, args, timeout_s=evaluate_timeout_s
+        )
         res_dict: dict[str, object] = result if isinstance(result, dict) else {}
         status = int(str(res_dict.get("status") or 0))
         raw_text = str(res_dict.get("body") or "")
@@ -194,7 +198,8 @@ class XHRStreamTransport:
 
         Guarantees V8 window cleanup on termination/timeout and prevents silent truncation.
         """
-        timeout_s = timeout_ms / 1000
+        unlimited = timeout_ms <= 0
+        timeout_s = 0.0 if unlimited else timeout_ms / 1000
         clean_headers = await _ensure_authorization_header(
             page, headers, auth_user=auth_user
         )
@@ -223,7 +228,7 @@ class XHRStreamTransport:
         )
         await page.evaluate(STREAMING_INIT_JS, init_args)
 
-        deadline = asyncio.get_running_loop().time() + timeout_s
+        deadline = None if unlimited else asyncio.get_running_loop().time() + timeout_s
         status_sent = False
         is_terminal = False
 
@@ -231,12 +236,13 @@ class XHRStreamTransport:
             while not is_terminal:
                 if page.is_closed() is True:
                     raise RuntimeError("Browser page closed during streaming")
-                now = asyncio.get_running_loop().time()
-                remaining = deadline - now
-                if remaining <= 0:
-                    break
-
-                step_timeout = min(remaining, 1.0)
+                if deadline is None:
+                    step_timeout = 1.0
+                else:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
+                    step_timeout = min(remaining, 1.0)
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=step_timeout)
                 except TimeoutError:
@@ -250,12 +256,14 @@ class XHRStreamTransport:
                     status = int(str(event.get("status") or 0))
                     yield ("status", status)
                     status_sent = True
-                    deadline = asyncio.get_running_loop().time() + timeout_s
+                    if deadline is not None:
+                        deadline = asyncio.get_running_loop().time() + timeout_s
                 elif etype == "chunk":
                     text = str(event.get("text") or "")
                     if text:
                         yield ("chunk", text.encode("utf-8"))
-                        deadline = asyncio.get_running_loop().time() + timeout_s
+                        if deadline is not None:
+                            deadline = asyncio.get_running_loop().time() + timeout_s
                 elif etype == "error":
                     message = str(event.get("message") or "unknown error")
                     raise RuntimeError(f"streaming request failed: {message}")

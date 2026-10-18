@@ -8,7 +8,7 @@ const codeSnippets = [
   {
     title: 'cURL',
     lang: 'bash',
-    code: `curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \\
+    code: `curl http://localhost:11451/v1beta/models/gemini-3.8-flash:generateContent \\
   -H "x-goog-api-key: your-api-key" \\
   -H "Content-Type: application/json" \\
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'`,
@@ -22,7 +22,7 @@ client = genai.Client(
     api_key="your-api-key",
     http_options={
         "api_version": "v1beta",
-        "base_url": "http://localhost:8080",
+        "base_url": "http://localhost:11451",
     },
 )
 

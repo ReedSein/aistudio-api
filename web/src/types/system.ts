@@ -5,6 +5,9 @@ export interface SystemConfig {
   proxy_configured: boolean
   auth_enabled: boolean
   timeout_stream: number
+  timeout_replay: number
+  browser_idle_timeout: number
+  env_overrides?: string[]
   yaml_content: string
   log_level?: string
   dump_requests?: boolean
@@ -25,6 +28,20 @@ export interface UpdateLoggingConfigResponse {
   debug_env_active: boolean
   dump_to_file: boolean
   dump_dir: string
+}
+
+export interface UpdateRuntimeConfigRequest {
+  timeout_stream?: number | null
+  timeout_replay?: number | null
+  browser_idle_timeout?: number | null
+}
+
+export interface UpdateRuntimeConfigResponse {
+  ok: boolean
+  timeout_stream: number
+  timeout_replay: number
+  browser_idle_timeout: number
+  env_overrides: string[]
 }
 
 export interface HealthCheckResponse {

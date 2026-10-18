@@ -34,7 +34,7 @@ aistudio
 - **检查更新**：检查本仓库 `master` 的新版本。
 - **一键更新**：更新项目、管理脚本、锁定的 Python 依赖和指定浏览器；浏览器版本未变时复用。
 
-默认访问 `http://127.0.0.1:8000`，在 Web 控制台的账号管理页面导入 Cookie 或凭据包。更新会短暂停机，成功后恢复原运行模式。
+默认访问 `http://127.0.0.1:11451`，在 Web 控制台的账号管理页面导入 Cookie 或凭据包。更新会短暂停机，成功后恢复原运行模式。
 
 用户配置独立保存在 `~/.config/aistudio-termux/`，账号及统计沿用原有数据目录，更新不会覆盖。Android 仍可能清理后台进程。
 
@@ -61,7 +61,7 @@ aistudio
 <summary><b>1. 查询模型列表</b></summary>
 
 ```bash
-curl http://localhost:8000/v1beta/models \
+curl http://localhost:11451/v1beta/models \
   -H "x-goog-api-key: your-api-key"
 ```
 </details>
@@ -70,7 +70,7 @@ curl http://localhost:8000/v1beta/models \
 <summary><b>2. 文本生成 (Non-streaming)</b></summary>
 
 ```bash
-curl http://localhost:8000/v1beta/models/gemini-3.7-flash:generateContent \
+curl http://localhost:11451/v1beta/models/gemini-3.7-flash:generateContent \
   -H "x-goog-api-key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -88,7 +88,7 @@ curl http://localhost:8000/v1beta/models/gemini-3.7-flash:generateContent \
 <summary><b>3. 流式生成 (Server-Sent Events)</b></summary>
 
 ```bash
-curl http://localhost:8000/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
+curl http://localhost:11451/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
   -H "x-goog-api-key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -115,7 +115,7 @@ client = genai.Client(
     api_key="your-api-key",
     http_options={
         "api_version": "v1beta",
-        "base_url": "http://localhost:8000",
+        "base_url": "http://localhost:11451",
     },
 )
 
@@ -147,7 +147,7 @@ client = genai.Client(
     api_key="your-api-key",
     http_options={
         "api_version": "v1beta",
-        "base_url": "http://localhost:8000",
+        "base_url": "http://localhost:11451",
     },
 )
 
@@ -192,7 +192,7 @@ if response.function_calls:
 
 ## Web 管理控制台
 
-系统内置静态打包的 Web 前端管理控制台（访问 `http://localhost:8000`）：
+系统内置静态打包的 Web 前端管理控制台（访问 `http://localhost:11451`）：
 
 - **仪表盘 (Dashboard)**：实时展示服务健康状况、各模型请求量、成功率及 429 冷却指标。
 - **账号管理 (Accounts)**：支持 Cookie 单条与凭据包批量导入、自动探测多账号、手动切换当前活跃账号或重置冷却状态。

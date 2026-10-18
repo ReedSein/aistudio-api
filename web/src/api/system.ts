@@ -9,6 +9,8 @@ import type {
   UpdateApiKeyRequest,
   UpdateLoggingConfigRequest,
   UpdateLoggingConfigResponse,
+  UpdateRuntimeConfigRequest,
+  UpdateRuntimeConfigResponse,
   HealthCheckResponse,
 } from '@/types'
 
@@ -58,6 +60,13 @@ export const systemApi = {
 
   updateLoggingConfig(req: UpdateLoggingConfigRequest): Promise<UpdateLoggingConfigResponse> {
     return request<UpdateLoggingConfigResponse>('/config/logging', {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    })
+  },
+
+  updateRuntimeConfig(req: UpdateRuntimeConfigRequest): Promise<UpdateRuntimeConfigResponse> {
+    return request<UpdateRuntimeConfigResponse>('/config/runtime', {
       method: 'PUT',
       body: JSON.stringify(req),
     })

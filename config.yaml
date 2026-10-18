@@ -13,6 +13,17 @@ logging:
   # 转储文件保存目录 (默认为项目根目录下 dumps/)
   dump_dir: dumps
 
+# 运行参数（可在 Web 控制台「设置」页修改，保存即生效）
+runtime:
+  # 流式请求静默超时（秒）：等待上游响应状态与两份数据之间的静默上限，收到数据即重新计时
+  # 0 表示不超时（仅由客户端断开、上游报错或页面关闭结束）
+  timeout_stream: 240
+  # 非流式请求（generateContent / 生图）整次等待超时（秒）；0 表示不超时
+  timeout_replay: 240
+  # 浏览器空闲自动回收（秒）：无在途请求时关闭后台浏览器释放内存；0 表示不自动回收
+  # 未写入时按平台默认：Termux 900 秒，其他平台 1800 秒
+  # browser_idle_timeout: 900
+
 model_defaults:
   # 是否自动丢弃下游客户端传入的未知/不支持参数（如 HARM_CATEGORY_CIVIC_INTEGRITY、不兼容的内置工具等）
   # 设置为 true 时自动过滤异常参数，避免 Google 上游返回 400 INVALID_ARGUMENT 报错

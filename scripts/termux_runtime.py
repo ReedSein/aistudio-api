@@ -66,7 +66,7 @@ class Installation:
     root: Path
     config_dir: Path
     state_dir: Path
-    port: int = 8000
+    port: int = 11451
 
     @classmethod
     def load(cls, root: Path | None = None, port: int | None = None) -> Installation:
@@ -81,7 +81,7 @@ class Installation:
         record = config_dir / "installation.json"
         saved = read_object(record) if record.exists() else {}
         saved_root = saved.get("project_root")
-        saved_port = saved.get("port", 8000)
+        saved_port = saved.get("port", 11451)
         if root is None:
             if not isinstance(saved_root, str):
                 raise ManagerError("尚未登记安装目录，请先运行 Termux 安装脚本。")

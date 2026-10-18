@@ -1,3 +1,5 @@
+import pytest
+
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
 from aistudio_api.infrastructure.gateway.wire_types import AistudioImageOutputMode
 
@@ -210,3 +212,52 @@ model_defaults:
         ).drop_unsupported_params
         is True
     )
+
+
+def test_runtime_settings_roundtrip_and_env_precedence(monkeypatch, tmp_path):
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        apply_configured_runtime_settings,
+        get_configured_runtime_settings,
+        update_configured_runtime_settings,
+    )
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("api_keys: []\n", encoding="utf-8")
+
+    assert get_configured_runtime_settings(config_path) == {}
+
+    updated = update_configured_runtime_settings(
+        timeout_stream=300, browser_idle_timeout=0, config_path=config_path
+    )
+    assert updated == {"timeout_stream": 300, "browser_idle_timeout": 0}
+
+    class _Target:
+        timeout_stream = 240
+        timeout_replay = 240
+        browser_idle_timeout = 900
+
+    target = _Target()
+    apply_configured_runtime_settings(target, config_path)
+    assert target.timeout_stream == 300
+    assert target.timeout_replay == 240
+    assert target.browser_idle_timeout == 0
+
+    monkeypatch.setenv("AISTUDIO_TIMEOUT_STREAM", "77")
+    target.timeout_stream = 77
+    apply_configured_runtime_settings(target, config_path)
+    assert target.timeout_stream == 77
+
+    invalid_path = tmp_path / "invalid.yaml"
+    invalid_path.write_text("runtime:\n  timeout_stream: abc\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="timeout_stream"):
+        get_configured_runtime_settings(invalid_path)
+
+    bool_path = tmp_path / "bool.yaml"
+    bool_path.write_text("runtime:\n  timeout_stream: true\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="timeout_stream"):
+        get_configured_runtime_settings(bool_path)
+
+    negative_path = tmp_path / "negative.yaml"
+    negative_path.write_text("runtime:\n  timeout_replay: -5\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="timeout_replay"):
+        get_configured_runtime_settings(negative_path)

@@ -50,6 +50,12 @@ async def lifespan(_app: FastAPI):
     from aistudio_api.infrastructure.browser.browser_engine import (
         install_process_cleanup_handlers,
     )
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        apply_configured_runtime_settings,
+    )
+
+    # 先应用 config.yaml runtime 段（环境变量显式设置时优先），再启动后台任务
+    apply_configured_runtime_settings(settings)
 
     install_process_cleanup_handlers()
 
@@ -72,6 +78,7 @@ async def lifespan(_app: FastAPI):
         runtime_state.browser_port,
         len(account_store.list_accounts()),
     )
+    logger.info("控制台地址: http://localhost:%s/", runtime_state.port)
 
     # 后台预热浏览器，避免首次请求延迟
     warmup_task = None
@@ -351,6 +358,7 @@ def main():
     args = parser.parse_args()
 
     runtime_state.browser_port = args.browser_port
+    runtime_state.port = args.port
 
     import uvicorn
 

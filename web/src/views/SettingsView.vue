@@ -5,6 +5,7 @@ import { useToastStore } from '@/stores/toast.ts'
 import type { SystemConfig } from '@/types/system.ts'
 import ApiKeyManagerCard from '@/components/settings/ApiKeyManagerCard.vue'
 import LogConfigCard from '@/components/settings/LogConfigCard.vue'
+import RuntimeConfigCard from '@/components/settings/RuntimeConfigCard.vue'
 import VisualConfigEditor from '@/components/config/VisualConfigEditor.vue'
 import {
   Server,
@@ -54,7 +55,7 @@ onMounted(() => {
           <span>服务端口 / 浏览器</span>
         </div>
         <div class="text-base font-bold text-gray-900 font-mono">
-          :{{ config?.port || 8080 }} <span class="text-xs text-gray-400 font-normal">/ CDP :{{ config?.browser_port || 9222 }}</span>
+          :{{ config?.port || 11451 }} <span class="text-xs text-gray-400 font-normal">/ CDP :{{ config?.browser_port || 9222 }}</span>
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
           无头模式: {{ config?.browser_headless ? '开启 (Headless)' : '禁用' }}
@@ -67,10 +68,10 @@ onMounted(() => {
           <span>流式响应超时</span>
         </div>
         <div class="text-base font-bold text-gray-900 font-mono">
-          {{ config?.timeout_stream || 120 }}s
+          {{ (config?.timeout_stream ?? 240) === 0 ? '不超时' : `${config?.timeout_stream ?? 240}s` }}
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
-          单次流式生成最大等待时间
+          流式请求静默等待上限（可在下方运行参数中修改）
         </div>
       </div>
 
@@ -135,6 +136,12 @@ onMounted(() => {
 
     <!-- Logging & Debug Config Card -->
     <LogConfigCard
+      v-if="config"
+      :initial-config="config"
+      @saved="loadConfig"
+    />
+    <!-- Runtime Parameters Card -->
+    <RuntimeConfigCard
       v-if="config"
       :initial-config="config"
       @saved="loadConfig"

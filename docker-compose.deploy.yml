@@ -4,7 +4,7 @@ services:
     container_name: aistudio-api
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "11451:8080"  # host 11451 -> container 8080 (upstream image internal port)
     volumes:
       - aistudio-api-data:/app/data
     environment:

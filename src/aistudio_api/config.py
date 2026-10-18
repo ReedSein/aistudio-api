@@ -250,7 +250,7 @@ def _resolve_default_idle_timeout() -> int:
 
 @dataclass(slots=True)
 class Settings:
-    port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
+    port: int = int(os.getenv("AISTUDIO_PORT", "11451"))
     browser_port: int = _load_int_env(
         "AISTUDIO_BROWSER_PORT", default=DEFAULT_BROWSER_PORT
     )
@@ -262,8 +262,8 @@ class Settings:
     proxy_url: str | None = discover_proxy_url()
     web_password: str | None = _load_web_password()
     api_keys: frozenset[str] = frozenset()
-    timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "120"))
-    timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "120"))
+    timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "240"))
+    timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "240"))
     timezone: str = resolve_timezone()
     locale: str = resolve_locale()
     dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in (

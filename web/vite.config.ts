@@ -14,14 +14,14 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': 'http://localhost:8080',
-      '/auth': 'http://localhost:8080',
-      '/stats': 'http://localhost:8080',
-      '/accounts': 'http://localhost:8080',
-      '/rotation': 'http://localhost:8080',
-      '/config': 'http://localhost:8080',
-      '/api-keys': 'http://localhost:8080',
-      '/health': 'http://localhost:8080',
+      '/api': 'http://localhost:11451',
+      '/auth': 'http://localhost:11451',
+      '/stats': 'http://localhost:11451',
+      '/accounts': 'http://localhost:11451',
+      '/rotation': 'http://localhost:11451',
+      '/config': 'http://localhost:11451',
+      '/api-keys': 'http://localhost:11451',
+      '/health': 'http://localhost:11451',
     },
   },
   build: {

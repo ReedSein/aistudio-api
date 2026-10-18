@@ -1,8 +1,9 @@
 (args) => {
     return new Promise((resolve) => {
-        const timeoutMs = (args.timeout || 60) * 1000;
+        // args.timeout === 0 表示不超时：不设定时器
+        const timeoutMs = args.timeout === 0 ? null : (args.timeout || 60) * 1000;
         const controller = new AbortController();
-        const timer = setTimeout(() => {
+        const timer = timeoutMs === null ? null : setTimeout(() => {
             controller.abort();
             resolve({status: 0, body: 'timeout'});
         }, timeoutMs);

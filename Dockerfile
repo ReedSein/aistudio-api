@@ -100,14 +100,14 @@ RUN mkdir -p /app/data /tmp
 RUN chmod +x /app/main.py /app/docker-entrypoint.sh
 
 # Expose ports
-# 8080: API server
+# 11451: API server
 # 9222: Browser debug port
-EXPOSE 8080 9222
+EXPOSE 11451 9222
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/v1beta/models || exit 1
+    CMD curl -f http://localhost:11451/v1beta/models || exit 1
 
 # Container entrypoint and default command
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["python3", "main.py", "server", "--port", "8080", "--browser-port", "9222"]
+CMD ["python3", "main.py", "server"]
