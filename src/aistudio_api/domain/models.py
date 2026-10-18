@@ -56,6 +56,10 @@ class ModelOutput:
         return self.candidates[0].thinking if self.candidates else ""
 
     @property
+    def thought_signature(self) -> str:
+        return self.candidates[0].thought_signature if self.candidates else ""
+
+    @property
     def images(self) -> list[GeneratedImage]:
         return self.candidates[0].images if self.candidates else []
 

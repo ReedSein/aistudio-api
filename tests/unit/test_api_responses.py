@@ -74,6 +74,33 @@ def test_to_gemini_parts_can_emit_inline_image_data():
     ]
 
 
+def test_to_gemini_parts_appends_candidate_signature_part():
+    parts = to_gemini_parts("答案", thinking="思考", thought_signature="SIG-1")
+
+    assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
+        {"text": "思考", "thought": True},
+        {"text": "答案"},
+        {"text": "", "thoughtSignature": "SIG-1"},
+    ]
+
+
+def test_to_gemini_parts_skips_signature_part_when_carried_by_function_call():
+    parts = to_gemini_parts(
+        "",
+        function_calls=[
+            {"name": "f", "args": {}, "call_id": "c1", "thought_signature": "SIG-1"}
+        ],
+        thought_signature="SIG-1",
+    )
+
+    assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
+        {
+            "functionCall": {"name": "f", "args": {}, "id": "c1"},
+            "thoughtSignature": "SIG-1",
+        }
+    ]
+
+
 def test_classify_gemini_error_payload():
     """Verify exception mapping to Gemini HTTP status and reason code."""
     assert classify_gemini_error_payload(SessionExpiredError("expired")) == (
@@ -220,7 +247,7 @@ async def test_build_gemini_streaming_response_passes_requested_model():
 
 @pytest.mark.asyncio
 async def test_streaming_metadata_event_does_not_block_failover():
-    """验证在仅接收到 thought_signature 等内部元数据事件时发生异常，不会误判为已发送数据而阻断重试。"""
+    """验证在仅接收到 response_id 等内部元数据事件时发生异常，不会误判为已发送数据而阻断重试。"""
     from unittest.mock import MagicMock
 
     from aistudio_api.api.schemas import (
@@ -241,7 +268,7 @@ async def test_streaming_metadata_event_does_not_block_failover():
         attempt_count += 1
         if attempt_count == 1:
             # 首次尝试：仅产生内部元数据事件，尚未发出实际正文 chunk，随即遇到 204/抖动异常
-            yield ("thought_signature", "sig_early")
+            yield ("response_id", "resp_early")
             raise RequestError(204, "No content")
         # 第二次尝试：正常流式输出
         yield ("body", "Hello world after retry")
@@ -264,3 +291,45 @@ async def test_streaming_metadata_event_does_not_block_failover():
     # 验证重试成功完成
     assert attempt_count == 2
     assert any("Hello world after retry" in str(c) for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_streaming_emits_thought_signature_as_own_chunk():
+    """验证流式路径把「空文本 + 签名」作为独立部件原样下发（正文之后、usage 之前）。"""
+    from unittest.mock import MagicMock
+
+    from aistudio_api.api.schemas import (
+        GeminiContent,
+        GeminiGenerateContentRequest,
+        GeminiPart,
+    )
+    from aistudio_api.application.api_service_gemini import (
+        _build_gemini_streaming_response,
+    )
+    from aistudio_api.infrastructure.gateway.client import AIStudioClient
+
+    async def fake_stream_generate_content(*args, **kwargs):
+        yield ("body", "Hello")
+        yield ("thought_signature", "SIG-9")
+        yield ("finish_reason", "STOP")
+
+    mock_client = MagicMock(spec=AIStudioClient)
+    mock_client.stream_generate_content = MagicMock(
+        side_effect=fake_stream_generate_content
+    )
+
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])]
+    )
+    resp = _build_gemini_streaming_response(
+        client=mock_client,
+        req=req,
+        model_path="gemini-3.1-flash-lite",
+    )
+
+    chunks = [chunk async for chunk in resp.body_iterator]
+    body_idx = next(i for i, c in enumerate(chunks) if '"Hello"' in str(c))
+    sig_idx = next(i for i, c in enumerate(chunks) if "SIG-9" in str(c))
+    usage_idx = next(i for i, c in enumerate(chunks) if "finishReason" in str(c))
+    assert body_idx < sig_idx < usage_idx
+    assert '"text": ""' in str(chunks[sig_idx])

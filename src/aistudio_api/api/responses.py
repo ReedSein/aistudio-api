@@ -62,8 +62,10 @@ def to_gemini_parts(
     thinking: str = "",
     images: list[GeneratedImage] | None = None,
     reasoning_images: list[GeneratedImage] | None = None,
+    thought_signature: str = "",
 ) -> list[GeminiPartResponse]:
     parts: list[GeminiPartResponse] = []
+    sig_carried = False
     if thinking:
         parts.append(GeminiPartResponse(text=thinking, thought=True))
     for image in reasoning_images or []:
@@ -77,6 +79,8 @@ def to_gemini_parts(
                 ),
             )
         )
+        if image.thought_signature:
+            sig_carried = True
     if content:
         parts.append(GeminiPartResponse(text=content))
     for image in images or []:
@@ -89,6 +93,8 @@ def to_gemini_parts(
                 ),
             )
         )
+        if image.thought_signature:
+            sig_carried = True
     for function_call in function_calls or []:
         fc_name = str(function_call.get("name") or "unknown")
         payload = GeminiFunctionCallPayload(name=fc_name)
@@ -106,6 +112,8 @@ def to_gemini_parts(
         if fc_id:
             payload.id = str(fc_id)
         sig = str(function_call.get("thought_signature") or "") or None
+        if sig:
+            sig_carried = True
         parts.append(GeminiPartResponse(functionCall=payload, thoughtSignature=sig))
     for function_response in function_responses or []:
         fr_name = str(function_response.get("name") or "unknown")
@@ -122,6 +130,9 @@ def to_gemini_parts(
         if fr_id:
             resp_payload.id = str(fr_id)
         parts.append(GeminiPartResponse(functionResponse=resp_payload))
+    if thought_signature and not sig_carried:
+        # 上游把候选级签名作为独立「空文本 + 签名」部件下发，回传时保持同形
+        parts.append(GeminiPartResponse(text="", thoughtSignature=thought_signature))
     if not parts:
         parts.append(GeminiPartResponse(text=""))
     return parts

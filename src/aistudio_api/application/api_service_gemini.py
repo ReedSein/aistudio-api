@@ -354,6 +354,7 @@ async def handle_gemini_generate_content(
                                 thinking=output.thinking,
                                 images=output.images,
                                 reasoning_images=output.reasoning_images,
+                                thought_signature=output.thought_signature,
                             ),
                         ),
                         finishReason=to_gemini_finish_reason(
@@ -396,7 +397,6 @@ def format_sse_event(
     *,
     model_version: str | None = None,
     response_id: str | None = None,
-    thought_signature: str | None = None,
 ) -> str | None:
     """Format a single Gemini streaming event into SSE chunk string."""
     if not text:
@@ -404,39 +404,30 @@ def format_sse_event(
 
     parts: list[dict[str, object]] = []
     if event_type == "body":
-        p: dict[str, object] = {"text": str(text)}
-        if thought_signature:
-            p["thoughtSignature"] = thought_signature
-        parts.append(p)
+        parts.append({"text": str(text)})
     elif event_type == "thinking":
-        p = {"text": str(text), "thought": True}
-        if thought_signature:
-            p["thoughtSignature"] = thought_signature
-        parts.append(p)
+        parts.append({"text": str(text), "thought": True})
+    elif event_type == "thought_signature":
+        # 上游以独立部件单独下发「空文本 + 签名」，原样转发以便调用方回传
+        parts.append({"text": "", "thoughtSignature": str(text)})
     elif event_type == "tool_calls":
         fc_list = text if isinstance(text, list) else []
         parts = [
             part.model_dump(mode="json", exclude_none=True)
             for part in to_gemini_parts("", function_calls=fc_list)
         ]
-        if thought_signature and parts:
-            parts[0]["thoughtSignature"] = thought_signature
     elif event_type == "images":
         img_list = text if isinstance(text, list) else []
         parts = [
             part.model_dump(mode="json", exclude_none=True)
             for part in to_gemini_parts("", images=img_list)
         ]
-        if thought_signature and parts:
-            parts[0]["thoughtSignature"] = thought_signature
     elif event_type == "reasoning_images":
         r_img_list = text if isinstance(text, list) else []
         parts = [
             part.model_dump(mode="json", exclude_none=True)
             for part in to_gemini_parts("", reasoning_images=r_img_list)
         ]
-        if thought_signature and parts:
-            parts[0]["thoughtSignature"] = thought_signature
     else:
         return None
 
@@ -519,7 +510,6 @@ def _build_gemini_streaming_response(
             final_usage: dict[str, object] | None = None
             final_finish_reason: str = "STOP"
             latest_response_id: str | None = None
-            buffered_thought_sig: str | None = None
             for stream_attempt in range(MAX_RETRIES):
                 has_yielded_data = False
                 await ensure_active_account(stream_attempt, model=model_path)
@@ -552,17 +542,13 @@ def _build_gemini_streaming_response(
                             )
                         elif event_type == "response_id":
                             latest_response_id = str(text)
-                        elif event_type == "thought_signature":
-                            buffered_thought_sig = str(text)
                         else:
                             chunk = format_sse_event(
                                 event_type,
                                 text,
                                 model_version=normalized.model,
                                 response_id=latest_response_id,
-                                thought_signature=buffered_thought_sig,
                             )
-                            buffered_thought_sig = None
                             if chunk:
                                 has_yielded_data = True
                                 yield chunk
