@@ -17,7 +17,7 @@ pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent
 Choose a different parent directory, for example `~/projects/aistudio-api`:
 
 ```bash
-bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
 Rerun the same command to resume installation. Unrelated directories, foreign repositories, and local source edits are preserved and reported.

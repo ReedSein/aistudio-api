@@ -19,10 +19,10 @@
 pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
 ```
 
-指定其他父目录时，在最后的 `bash` 命令后添加参数：
+指定其他父目录时，直接选择下面这一行安装命令：
 
 ```bash
-bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
 安装器按需安装 Python、Git、uv、curl、ca-certificates、proot-distro、gum，以及构建 CFFI、PyYAML 所需的 clang、pkg-config；创建或复用 `aistudio-api` 浏览器容器，按锁文件同步依赖，并安装 `aistudio` 命令。已有安装可再次运行相同命令续做；它不会自动覆盖源码修改，也不会替换其他仓库。

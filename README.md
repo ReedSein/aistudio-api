@@ -17,7 +17,7 @@ pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent
 指定父目录，例如安装到 `~/projects/aistudio-api`：
 
 ```bash
-bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
 再次执行相同安装命令可以续做失败的安装。已有无关目录、源码修改或其他仓库会明确报错并停止。
