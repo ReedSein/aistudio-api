@@ -1,6 +1,6 @@
 # 决策台账：油猴脚本抓取 Cookie 与有头转发打底
 
-> 状态：未采纳 · 讨论中（草案，不构成实施授权，不改任何正式状态）
+> 状态：已采纳并归档（2026-10-18，实测通过后归档）
 
 ## 状态
 
@@ -78,3 +78,5 @@
 - 2026-10-18：主人实测报告「脚本已安装并启用，但 aistudio.google.com 页面上看不到面板、圆钮也无痕迹」；同页 sukaka 参考脚本正常显示（排除环境）。排查：aistudio.google.com 响应头启用 Trusted Types（`require-trusted-types-for 'script'`）；v0.1.0 面板以 `wrap.innerHTML` 构建，赋值被拦截抛 TrustedHTML 错误、脚本静默中止，仅余空宿主 div，与现象吻合；本地以同策略复现（mounted=false + 报错），参考脚本全用 createElement、零 innerHTML，印证成因。修复 v0.1.1（提交 `bae714c651cbe151390dd4e74207814ea117a0b0`）：createElement 构建；初始化 try/catch，失败 console.error + alert 明示（不再静默）；`applyOpen` 空守卫；新增 GM_registerMenuCommand「打开 Cookie 抓取面板」。验证：同策略复现红→绿、无策略不回归、截图目视正常、`node --check` 通过、线上即时供应 0.1.1。待主人更新脚本后重测。
 
 - 2026-10-18：探活失败定性并定出解法。核验：Termux（经本地代理）可达 Google 探活接口，未认证请求干净回 401——失败为认证数据不完整而非网络。联网核查（当日，并抽查官方 CRX 解包源码确认）：Tampermonkey 稳定版（Edge/Chrome/Firefox 构建）默认 `script_cookie_access="!httponly"` 并在源码中 `filter(e=>!e.httpOnly)`——GM_cookie 默认读不到 HttpOnly 项；解法＝油猴仪表板「配置模式→高级；安全→允许脚本访问 Cookie→全部」，与浏览器开发者模式无关。脚本 v0.1.2（`c531317`）提示改为列出缺失关键项；文档新增「开启完整 Cookie 读取」并回填实测记录（`8bdd96510d61d65c868a450fd6c23f7ee1f93443`）。待主人开启该设置后重测。
+
+- 2026-10-18：主人实测通过并归档。完整读取开启（油猴「允许脚本访问 Cookie＝全部」）后重推：探活导入成功（1 个账号，u/0），账号被自动设为当前活跃账号，端到端调用（长思考请求）验证通过；①（runtime-timeouts-port）的验收项同轮一并确认。`docs/USERSCRIPT.md`「实测记录」已补最终结论。本目录移入 `design_archive/userscript-cookie-capture/`，handoff 已删除；推送随归档提交完成。

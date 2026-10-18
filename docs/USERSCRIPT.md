@@ -62,3 +62,4 @@ Tampermonkey 稳定版默认只把「非 HttpOnly」的 Cookie 交给脚本，�
 - 该组合下 GM_cookie 可用，但返回的 Cookie 只包含非 HttpOnly 项，HSID、SSID、__Secure-1PSID、__Secure-3PSID 等关键项读不到。
 - 用「页面可读子集」推送后，服务端探活导入被 Google 拒绝（HTTP 400，未探测到有效已登录 Google 账号）。服务端到 Google 的链路与代理已单独核验正常，失败原因是认证用的 Cookie 不完整。
 - 结论：页面可读子集不足以完成探活导入，需要能读取 HttpOnly 的完整集合。开启方式见「开启完整 Cookie 读取」一节。
+- 开启完整读取后重推：导入成功，账号进入服务端列表并被自动设为当前活跃账号，端到端调用（长思考请求）验证通过。整条链路（面板抓取 → 探活导入 → 账号可用）均已实测。
