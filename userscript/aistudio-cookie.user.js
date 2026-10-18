@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Studio Cookie 抓取推送 (aistudio-api)
 // @namespace    https://github.com/ReedSein/aistudio-api
-// @version      0.1.1
+// @version      0.1.2
 // @description  在 aistudio.google.com 抓取登录 Cookie，推送到自家 aistudio-api 服务并探活导入全部已登录账号
 // @author       ReedSein
 // @match        https://aistudio.google.com/*
@@ -45,6 +45,17 @@
   const DEFAULT_SERVER = 'http://127.0.0.1:11451';
   const PUSH_TIMEOUT_MS = 300000;
   const HOST_ID = 'aistudio-cookie-helper';
+
+  const CORE_COOKIE_NAMES = [
+    'SID',
+    'HSID',
+    'SSID',
+    'SAPISID',
+    '__Secure-1PAPISID',
+    '__Secure-3PAPISID',
+    '__Secure-1PSID',
+    '__Secure-3PSID'
+  ];
 
   if (document.getElementById(HOST_ID)) return;
 
@@ -337,18 +348,24 @@
   }
 
   function updateHint(collected) {
+    const parts = [];
     if (!collected.gmSupported) {
-      els.hint.textContent =
-        '扩展增强不可用：本次只推送页面可读 Cookie。桌面 Chrome/Edge 可尝试在扩展管理页' +
-        '开启 Tampermonkey 开发者模式后启用 HttpOnly 增强。';
+      parts.push('扩展增强不可用，只推送了页面可读 Cookie。');
     } else if (collected.gmFailed) {
-      els.hint.textContent =
-        '扩展增强读取失败（可能未授权或被浏览器拒绝）：本次只推送页面可读 Cookie。';
+      parts.push('扩展增强读取失败（可能未授权），只推送了页面可读 Cookie。');
     } else if (collected.enhanced) {
-      els.hint.textContent = '已合并扩展读取的完整 Cookie 集合（含 HttpOnly 项）。';
+      parts.push('已合并扩展读取的完整 Cookie 集合。');
     } else {
-      els.hint.textContent = '扩展增强可用，但未读到额外项（页面可读集已完整）。';
+      parts.push('扩展读取未带来额外项（HttpOnly 项可能未放行）。');
     }
+    const missing = CORE_COOKIE_NAMES.filter((name) => !collected.cookies.has(name));
+    if (missing.length) {
+      parts.push(
+        '缺少关键项 ' + missing.join('、') +
+        '：服务端探活导入可能失败；开启完整 Cookie 读取的方法见 docs/USERSCRIPT.md。'
+      );
+    }
+    els.hint.textContent = parts.join(' ');
   }
 
   // ---------- 位置与展开状态 ----------
@@ -516,7 +533,7 @@
     }
     try {
       alert(
-        '[AI Studio Cookie 抓取 v0.1.1] 初始化失败：' +
+        '[AI Studio Cookie 抓取 v0.1.2] 初始化失败：' +
         (error && error.message ? error.message : String(error))
       );
     } catch (ignore) {
