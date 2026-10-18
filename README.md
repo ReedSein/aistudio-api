@@ -198,6 +198,7 @@ if response.function_calls:
 - **账号管理 (Accounts)**：支持 Cookie 单条与凭据包批量导入、自动探测多账号、手动切换当前活跃账号或重置冷却状态。
 - **系统设置 (Settings)**：在线编辑 `config.yaml`（支持配置 profiles 与 models 默认规则），保存后服务端即时热重载。
 - **访问鉴权**：设置环境变量 `AISTUDIO_WEB_PASSWORD` 后自动开启登录鉴权守卫。
+- **油猴脚本**：在浏览器登录 aistudio.google.com 后一键抓取 Cookie 推送到本服务，自动探活导入多账号（[使用说明](./docs/USERSCRIPT.md)）。
 
 ---
 

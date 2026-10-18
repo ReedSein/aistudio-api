@@ -194,6 +194,7 @@ The service includes a built-in static Web Console served at `http://localhost:1
 - **Accounts**: Import Cookie credentials (single text or bundle files), auto-probe multiple accounts, switch the active account, or reset rate limits.
 - **Settings**: Online editor for `config.yaml` with instant hot-reloading on save.
 - **Access Control**: Enable authentication by setting `AISTUDIO_WEB_PASSWORD`.
+- **Userscript**: Capture Cookies on aistudio.google.com and push them to this service with one tap; multi-account auto-probe import ([guide](./docs/USERSCRIPT.md)).
 
 ---
 

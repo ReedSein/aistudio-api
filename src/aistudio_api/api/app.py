@@ -34,6 +34,7 @@ from .routes_system import (
     protected_router as system_protected_router,
     public_router as system_public_router,
 )
+from .routes_userscript import router as userscript_router
 from .state import runtime_state
 
 _log_cfg = get_configured_logging_settings()
@@ -135,6 +136,7 @@ app.include_router(accounts_router, prefix="/api", dependencies=[Depends(require
 app.include_router(accounts_router, dependencies=[Depends(require_web_auth)])
 app.include_router(gemini_router, dependencies=[Depends(require_api_key)])
 app.include_router(models_router, dependencies=[Depends(require_api_key)])
+app.include_router(userscript_router)
 
 
 @app.exception_handler(HTTPException)
@@ -315,6 +317,7 @@ async def spa_navigation_middleware(request: Request, call_next):
             "/rotation",
             "/config",
             "/api-keys",
+            "/userscript",
         )
     )
     is_accounts_spa = request.url.path in ("/accounts", "/accounts/")

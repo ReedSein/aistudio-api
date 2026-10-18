@@ -206,6 +206,7 @@ aistudio-api/
 │   │       └── ui/                # Material 3 主题、MainScreen、按需挂载的 LoginScreen
 │   ├── build.gradle.kts           # 根构建脚本
 │   └── .editorconfig              # ktlint 代码规范配置
+├── userscript/                    # 浏览器端油猴脚本：在 aistudio.google.com 抓取 Cookie 推送到本服务
 ├── src/aistudio_api/
 │   ├── api/                       # HTTP 接口层 (FastAPI)
 │   │   ├── app.py                 # 应用生命周期与静态托管

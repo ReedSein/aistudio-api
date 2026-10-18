@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useAccountsStore } from '@/stores/accounts.ts'
 import Modal from '@/components/ui/Modal.vue'
 import Button from '@/components/ui/Button.vue'
-import { Sparkles, FileText, Upload, FolderOpen, CheckCircle2 } from 'lucide-vue-next'
+import { Sparkles, FileText, Upload, FolderOpen, CheckCircle2, Puzzle } from 'lucide-vue-next'
 defineProps<{
   modelValue: boolean
 }>()
@@ -131,6 +131,27 @@ async function handleSubmit() {
           <Upload class="w-3.5 h-3.5" />
           <span>文件批量导入</span>
         </button>
+      </div>
+
+      <!-- Userscript Install Hint -->
+      <div class="flex items-start gap-2.5 p-3 bg-amber-50/60 rounded-xl border border-amber-200/70">
+        <div class="w-7 h-7 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+          <Puzzle class="w-3.5 h-3.5" />
+        </div>
+        <div class="flex-1 text-xs">
+          <div class="font-semibold text-amber-900">
+            用油猴脚本自动抓取（推荐手机端）
+          </div>
+          <div class="text-amber-800/80 mt-0.5 leading-relaxed">
+            浏览器装好 Tampermonkey 后，
+            <a
+              href="/userscript/aistudio-cookie.user.js"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-amber-700 underline underline-offset-2 hover:text-amber-900"
+            >点此安装抓取脚本</a>，登录 aistudio.google.com 即可一键推送 Cookie（说明见 docs/USERSCRIPT.md）。
+          </div>
+        </div>
       </div>
 
       <!-- Mode: File Import -->

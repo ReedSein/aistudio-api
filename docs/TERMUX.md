@@ -47,6 +47,8 @@ aistudio
 aistudio --register --port 11451
 ```
 
+在手机或桌面浏览器中导入 Cookie 时，可以安装服务自带的油猴脚本：浏览器装好 Tampermonkey 后，打开 `http://127.0.0.1:11451/userscript/aistudio-cookie.user.js` 安装，用法见 [USERSCRIPT.md](./USERSCRIPT.md)。
+
 退出菜单会保留已启动的静默服务。Android 仍可能清理后台进程；本工具不会自动更改系统电池策略或设置开机自启。
 
 `aistudio` 入口位于 `~/.local/bin/aistudio`。若当前 shell 没有将此目录加入 PATH，可直接使用该完整路径启动。
