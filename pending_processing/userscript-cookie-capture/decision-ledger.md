@@ -74,3 +74,5 @@
 - 排除项：有头转发（独立任务，不预建结构）、云端依赖、现有导入接口语义、Android 端。
 
 - 2026-10-18：实施完成并本地提交 `e19c10c825d60c5eaee439af12430cf17ad6150f`。质量门禁：pytest 255 通过（含新增路由测试 2 项）、ruff lint 全过、新文件格式干净（app.py 全库既有格式漂移未触碰）、pyright 0 错、eslint 0 告警、vue-tsc 仅 ProfileCard.vue 两处 master 既有报错、vite build 成功、node --check 通过；服务经管理引擎静默重启（旧 6724 → 新 11487），脚本路由冒烟：200 JS、更新地址按访问地址改写、`Accept: text/html` 不被 SPA 兜底；部署产包含弹窗安装入口。审查修正：GM_cookie 被拒时的误报提示已补「读取失败」分支。剩余：主人合并实测（①+②）→ 推送 → 归档；本 handoff 随后一并提交。
+
+- 2026-10-18：主人实测报告「脚本已安装并启用，但 aistudio.google.com 页面上看不到面板、圆钮也无痕迹」；同页 sukaka 参考脚本正常显示（排除环境）。排查：aistudio.google.com 响应头启用 Trusted Types（`require-trusted-types-for 'script'`）；v0.1.0 面板以 `wrap.innerHTML` 构建，赋值被拦截抛 TrustedHTML 错误、脚本静默中止，仅余空宿主 div，与现象吻合；本地以同策略复现（mounted=false + 报错），参考脚本全用 createElement、零 innerHTML，印证成因。修复 v0.1.1（提交 `bae714c651cbe151390dd4e74207814ea117a0b0`）：createElement 构建；初始化 try/catch，失败 console.error + alert 明示（不再静默）；`applyOpen` 空守卫；新增 GM_registerMenuCommand「打开 Cookie 抓取面板」。验证：同策略复现红→绿、无策略不回归、截图目视正常、`node --check` 通过、线上即时供应 0.1.1。待主人更新脚本后重测。
