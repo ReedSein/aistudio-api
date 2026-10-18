@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Studio Cookie 抓取推送 (aistudio-api)
 // @namespace    https://github.com/ReedSein/aistudio-api
-// @version      0.1.0
+// @version      0.1.1
 // @description  在 aistudio.google.com 抓取登录 Cookie，推送到自家 aistudio-api 服务并探活导入全部已登录账号
 // @author       ReedSein
 // @match        https://aistudio.google.com/*
@@ -9,6 +9,7 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_cookie
+// @grant        GM_registerMenuCommand
 // @connect      localhost
 // @connect      127.0.0.1
 // @connect      *
@@ -29,6 +30,9 @@
  *    u/0, u/1, ... 全部已登录 Google 账号并一键导入；缺的凭据由服务端浏览器自行协商补齐。
  *
  * 设置（服务地址、管理密码、面板位置）保存在脚本管理器本地存储中，密码仅发送到所填地址。
+ *
+ * 注意：aistudio.google.com 启用了 Trusted Types 安全策略，会拦截 innerHTML 赋值。
+ * 面板全部用 createElement 构建；初始化失败会弹出提示，不再静默消失。
  */
 
 (function () {
@@ -43,6 +47,10 @@
   const HOST_ID = 'aistudio-cookie-helper';
 
   if (document.getElementById(HOST_ID)) return;
+
+  let host = null;
+  let shadow = null;
+  let els = null;
 
   function getCfg(key, fallback) {
     try {
@@ -258,45 +266,70 @@
     '  justify-content: center; touch-action: manipulation; }'
   ].join('\n');
 
-  const host = document.createElement('div');
-  host.id = HOST_ID;
-  host.style.cssText = 'position: fixed; z-index: 2147483647;';
-  document.body.appendChild(host);
-  const shadow = host.attachShadow({ mode: 'open' });
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
 
-  const style = document.createElement('style');
-  style.textContent = PANEL_CSS;
+  function buildPanel() {
+    const style = document.createElement('style');
+    style.textContent = PANEL_CSS;
 
-  const wrap = document.createElement('div');
-  wrap.className = 'wrap';
-  wrap.innerHTML = [
-    '<div class="panel">',
-    '  <div class="head"><span>AI Studio Cookie 抓取</span><button type="button" class="headBtn">收起</button></div>',
-    '  <div class="body">',
-    '    <label class="field">服务地址<input class="server" type="text" spellcheck="false"></label>',
-    '    <label class="field">管理密码（可选，服务设置了才需要）<input class="password" type="password" spellcheck="false"></label>',
-    '    <button type="button" class="big push">抓取并推送</button>',
-    '    <div class="status">就绪：请先确认已在 aistudio.google.com 登录。</div>',
-    '    <div class="hint"></div>',
-    '  </div>',
-    '</div>',
-    '<button type="button" class="bubble" aria-label="展开 AI Studio Cookie 抓取面板">🍪</button>'
-  ].join('\n');
+    const wrap = el('div', 'wrap');
 
-  shadow.appendChild(style);
-  shadow.appendChild(wrap);
+    const panel = el('div', 'panel');
+    const head = el('div', 'head');
+    head.appendChild(el('span', null, 'AI Studio Cookie 抓取'));
+    const headBtn = el('button', 'headBtn', '收起');
+    headBtn.type = 'button';
+    head.appendChild(headBtn);
+    panel.appendChild(head);
 
-  const els = {
-    panel: wrap.querySelector('.panel'),
-    head: wrap.querySelector('.head'),
-    headBtn: wrap.querySelector('.headBtn'),
-    bubble: wrap.querySelector('.bubble'),
-    server: wrap.querySelector('.server'),
-    password: wrap.querySelector('.password'),
-    push: wrap.querySelector('.push'),
-    status: wrap.querySelector('.status'),
-    hint: wrap.querySelector('.hint')
-  };
+    const body = el('div', 'body');
+    const serverLabel = el('label', 'field', '服务地址');
+    const serverInput = el('input', 'server');
+    serverInput.type = 'text';
+    serverInput.spellcheck = false;
+    serverLabel.appendChild(serverInput);
+    const passwordLabel = el('label', 'field', '管理密码（可选，服务设置了才需要）');
+    const passwordInput = el('input', 'password');
+    passwordInput.type = 'password';
+    passwordInput.spellcheck = false;
+    passwordLabel.appendChild(passwordInput);
+    const pushBtn = el('button', 'big push', '抓取并推送');
+    pushBtn.type = 'button';
+    const status = el('div', 'status', '就绪：请先确认已在 aistudio.google.com 登录。');
+    const hint = el('div', 'hint');
+    body.appendChild(serverLabel);
+    body.appendChild(passwordLabel);
+    body.appendChild(pushBtn);
+    body.appendChild(status);
+    body.appendChild(hint);
+    panel.appendChild(body);
+    wrap.appendChild(panel);
+
+    const bubble = el('button', 'bubble', '🍪');
+    bubble.type = 'button';
+    bubble.setAttribute('aria-label', '展开 AI Studio Cookie 抓取面板');
+    wrap.appendChild(bubble);
+
+    shadow.appendChild(style);
+    shadow.appendChild(wrap);
+
+    return {
+      panel,
+      head,
+      headBtn,
+      bubble,
+      server: serverInput,
+      password: passwordInput,
+      push: pushBtn,
+      status,
+      hint
+    };
+  }
 
   function setStatus(text, kind) {
     els.status.textContent = text;
@@ -340,6 +373,7 @@
   }
 
   function applyOpen(open) {
+    if (!els) return;
     els.panel.style.display = open ? 'block' : 'none';
     els.bubble.style.display = open ? 'none' : 'flex';
     setCfg(CFG_OPEN, open);
@@ -444,24 +478,57 @@
     }
   }
 
-  els.push.addEventListener('click', onPush);
-  els.headBtn.addEventListener('click', () => applyOpen(false));
-  els.bubble.addEventListener('click', () => applyOpen(true));
-  els.server.addEventListener('change', () => {
-    els.server.value = normalizeServer(els.server.value);
-    setCfg(CFG_SERVER, els.server.value);
-  });
-  els.password.addEventListener('change', () => setCfg(CFG_PASSWORD, els.password.value));
-  window.addEventListener('resize', () => applyPosition(currentPosition()));
+  // ---------- 初始化 ----------
 
-  els.server.value = String(getCfg(CFG_SERVER, DEFAULT_SERVER));
-  let savedPos = null;
   try {
-    savedPos = JSON.parse(getCfg(CFG_POS, '') || 'null');
+    host = document.createElement('div');
+    host.id = HOST_ID;
+    host.style.cssText = 'position: fixed; z-index: 2147483647;';
+    document.body.appendChild(host);
+    shadow = host.attachShadow({ mode: 'open' });
+    els = buildPanel();
+
+    els.push.addEventListener('click', onPush);
+    els.headBtn.addEventListener('click', () => applyOpen(false));
+    els.bubble.addEventListener('click', () => applyOpen(true));
+    els.server.addEventListener('change', () => {
+      els.server.value = normalizeServer(els.server.value);
+      setCfg(CFG_SERVER, els.server.value);
+    });
+    els.password.addEventListener('change', () => setCfg(CFG_PASSWORD, els.password.value));
+    window.addEventListener('resize', () => applyPosition(currentPosition()));
+
+    els.server.value = String(getCfg(CFG_SERVER, DEFAULT_SERVER));
+    let savedPos = null;
+    try {
+      savedPos = JSON.parse(getCfg(CFG_POS, '') || 'null');
+    } catch (error) {
+      savedPos = null;
+    }
+    applyPosition(savedPos);
+    makeDraggable(els.head);
+    applyOpen(getCfg(CFG_OPEN, true) !== false);
   } catch (error) {
-    savedPos = null;
+    try {
+      console.error('[aistudio-cookie] 初始化失败:', error);
+    } catch (ignore) {
+      /* ignore */
+    }
+    try {
+      alert(
+        '[AI Studio Cookie 抓取 v0.1.1] 初始化失败：' +
+        (error && error.message ? error.message : String(error))
+      );
+    } catch (ignore) {
+      /* ignore */
+    }
   }
-  applyPosition(savedPos);
-  makeDraggable(els.head);
-  applyOpen(getCfg(CFG_OPEN, true) !== false);
+
+  try {
+    if (typeof GM_registerMenuCommand === 'function') {
+      GM_registerMenuCommand('打开 Cookie 抓取面板', () => applyOpen(true));
+    }
+  } catch (error) {
+    /* 菜单命令不可用时忽略 */
+  }
 })();
