@@ -1,238 +1,49 @@
-# aistudio-api
+# aistudio-api · Termux
 
-<p align="center">
-  <a href="https://github.com/DeconstructedCube/aistudio-api"><img src="https://img.shields.io/badge/API-Gemini%20v1beta-4285F4?style=flat-square&logo=google" alt="Gemini API"></a>
-  <a href="https://hub.docker.com/r/bedrockblock/aistudio-api"><img src="https://img.shields.io/badge/Docker-bedrockblock%2Faistudio--api-2496ED?style=flat-square&logo=docker" alt="Docker Hub"></a>
-  <a href="https://deepwiki.com/DeconstructedCube/aistudio-api"><img src="https://img.shields.io/badge/DeepWiki-DeconstructedCube%2Faistudio--api-5B68E4?style=flat-square&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==" alt="DeepWiki"></a>
-  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/Framework-FastAPI-009688?style=flat-square&logo=fastapi" alt="FastAPI"></a>
-  <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Frontend-Vue%203%20%2B%20Vite-4FC08D?style=flat-square&logo=vuedotjs" alt="Vue 3"></a>
-  <a href="https://docs.astral.sh/uv/"><img src="https://img.shields.io/badge/Python-3.11%2B%20%7C%20uv-261230?style=flat-square&logo=python" alt="Python uv"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"></a>
-</p>
+A Termux-focused fork of [aistudio-api](https://github.com/DeconstructedCube/aistudio-api), maintained by ReedSein. It exposes Google AI Studio web sessions through the native Gemini API.
 
-<p align="center">
-  Google AI Studio reverse proxy gateway that exposes native Google Gemini API interfaces.
-</p>
+Targets Android ARM64 Termux with an interactive Chinese management menu, one-command installation, and coordinated updates. Python runs in Termux; CloakBrowser uses an Ubuntu proot container for its system libraries.
 
-<p align="center">
-  <a href="./README.md">中文文档</a>
-</p>
+[中文](./README.md) · [Detailed Termux guide](./docs/TERMUX.md)
 
----
+## Install
 
-## Table of Contents
-
-- [Features](#features)
-- [Architecture & Documentation](#architecture--documentation)
-- [Quick Start](#quick-start)
-  - [Android (Termux)](#android-termux)
-  - [Windows](#windows)
-  - [Linux / macOS](#linux--macos)
-  - [Docker Deployment](#docker-deployment)
-- [Configuration & Environment Variables](#configuration--environment-variables)
-- [API Usage Examples](#api-usage-examples)
-  - [cURL](#curl)
-  - [Python SDK (google-genai)](#python-sdk-google-genai)
-  - [Function Calling](#function-calling)
-- [Web Management Console](#web-management-console)
-- [Development & Testing](#development--testing)
-- [License](#license)
-
----
-
-## Features
-
-| Feature | Description |
-|---|---|
-| **Gemini API Compatibility** | Supports `/v1beta/...` endpoints including Thinking, multimodal inputs, function calling, and image generation |
-| **Dynamic Model Discovery** | Automatically synchronizes and discovers available models from upstream Google AI Studio |
-| **Multi-Account Rotation** | Manages multiple accounts with automatic failover, tracks 429 rate limits per model independently, and resets quotas at midnight Pacific Time |
-| **Runtime State Persistence** | Model usage statistics (`stats.json`) and account 429 cooldown & quota status (`rotator_state.json`) are automatically persisted to disk across restarts |
-| **Downstream Parameter Fault Tolerance** | `drop_unsupported_params` automatically drops unsupported safety categories (e.g. `HARM_CATEGORY_CIVIC_INTEGRITY`) and tools to prevent 400 errors |
-| **Multi-Account Probing** | Extracts and verifies sub-accounts (`u/0`, `u/1`...) automatically when importing a multi-session Cookie |
-| **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
-| **Pure Python CDP** | Direct Chrome DevTools Protocol communication over asynchronous WebSockets without Node.js, Playwright, or Selenium |
-| **Web Management Console** | Built-in web dashboard for account management (supporting text and JSON bundle file imports), live request metrics, and runtime `config.yaml` hot reloading |
-| **Android Companion App** | Native Android app (`android/`) built with Jetpack Compose, featuring isolated multi-profile management, on-demand WebView, Bitwarden autofill, and one-click bundle export |
-> [!NOTE]
-> **Memory Footprint**: The standalone Python backend consumes ~35 - 45 MB RAM. With a single controlled Chromium instance, total actual system memory (PSS) is ~350 - 450 MB on Termux proot (~250 - 350 MB on native Linux). On Android Termux, ≥ 1 GB free RAM is recommended.
-
-## Architecture & Documentation
-
-```
-┌────────────────────────────────────────────────────────┐
-│               Client (cURL / Python SDK)               │
-└───────────────────────────┬────────────────────────────┘
-                            │ /v1beta/models/...
-┌───────────────────────────▼────────────────────────────┐
-│              FastAPI HTTP Gateway (Port 8080)          │
-├───────────────────────────┬────────────────────────────┤
-│    Account Rotator        │    Chat & Wire Codec       │
-│  (Sticky & 429 Isolation) │ (Protobuf-JSON & BotGuard) │
-└───────────────────────────┼────────────────────────────┘
-                            │ CDP WebSocket
-┌───────────────────────────▼────────────────────────────┐
-│      Controlled Chromium Instance (CloakBrowser)       │
-│       In-Page XHR Replay (withCredentials=true)        │
-└───────────────────────────┬────────────────────────────┘
-                            │ HTTPS / RPC
-┌───────────────────────────▼────────────────────────────┐
-│         Google AI Studio (alkalimakersuite-pa)         │
-└────────────────────────────────────────────────────────┘
-```
-
-Technical reference documentation:
-
-- [System Architecture Specification (ARCHITECTURE.md)](./docs/ARCHITECTURE.md): Layered architecture, request lifecycle, wire codec, and concurrency model.
-- [Wire Protocol Reverse Engineering Specification (WIRE_SPECIFICATION.md)](./docs/WIRE_SPECIFICATION.md): Protobuf-JSON array mappings, field indices, multimodal Part structures, and Schema encoding.
-- [BotGuard Verification Chain (BOTGUARD_VERIFICATION_CHAIN.md)](./docs/BOTGUARD_VERIFICATION_CHAIN.md): WAA challenge handshake, dynamic Wasm signing, content hashing, and upstream validation.
-- [Agent & Engineering Conventions (AGENT.md)](./AGENT.md): Strict type specifications, testing standards, and development guidelines.
-
----
-
-## Quick Start
-
-### Android (Termux)
-
-> [!TIP]
-> **Download Notice**: Always install Termux from [F-Droid](https://f-droid.org/packages/com.termux/) or [GitHub Releases](https://github.com/termux/termux-app/releases). **Do NOT install from the Google Play Store** (the Play Store build is obsolete and will produce repository update errors).
-
-Open Termux and run the following commands step by step:
+The default location is `~/aistudio-api`, independent of the current directory:
 
 ```bash
-# Step 1: Update Termux environment and install git
-pkg update -y && pkg install -y git
-
-# Step 2: Clone repository and enter directory
-git clone https://github.com/DeconstructedCube/aistudio-api.git
-cd aistudio-api
-
-# Step 3: Initialize Python environment & sync dependencies (auto-resolves prebuilt Android wheels)
-bash scripts/setup-env.sh
-uv sync
-
-# Step 4: Setup managed CloakBrowser runtime (first run only, takes ~1-2 min)
-bash scripts/setup-browser.sh
-
-# Step 5: Start server
-uv run python main.py server --port 8080
+pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
 ```
 
-Once started:
-1. Open your phone's browser and go to **`http://localhost:8080`** to access the Web Console;
-2. Navigate to **Accounts**, paste your Google account Cookies or import a bundle to start using the API;
-3. **Background Persistence Tip**: Pull down Android's notification bar, tap `Acquire Wakelock` on Termux's notification, and disable battery optimization for Termux in phone system settings to prevent sleep kills.
-
----
-
-### Windows
-
-Prerequisite: [Python 3.11+](https://www.python.org/downloads/) installed (check `Add python.exe to PATH` during setup).
-
-Open PowerShell or Windows Terminal:
-
-```bat
-# Step 1: Install uv package manager
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# Step 2: Clone repository and enter directory
-git clone https://github.com/DeconstructedCube/aistudio-api.git
-cd aistudio-api
-
-# Step 3: Sync dependencies
-uv sync
-
-# Step 4: Install CloakBrowser (first run only)
-scripts\install-browser.bat
-
-# Step 5: Start server
-uv run python main.py server --port 8080
-```
-
-Open **`http://localhost:8080`** in your browser to access the Web Console.
-
----
-
-### Linux / macOS
-
-Open a terminal and run:
+Choose a different parent directory, for example `~/projects/aistudio-api`:
 
 ```bash
-# Step 1: Install uv package manager
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Step 2: Clone repository and enter directory
-git clone https://github.com/DeconstructedCube/aistudio-api.git
-cd aistudio-api
-
-# Step 3: Sync dependencies
-uv sync
-
-# Step 4: Install CloakBrowser (first run only)
-bash scripts/setup-browser.sh
-
-# Step 5: Start server
-uv run python3 main.py server --port 8080
+bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
 ```
 
-Open **`http://localhost:8080`** in your browser to access the Web Console.
+Rerun the same command to resume installation. Unrelated directories, foreign repositories, and local source edits are preserved and reported.
 
----
-
-### Docker Deployment
-
-CloakBrowser is bundled in the container image for immediate use:
+## Manage
 
 ```bash
-docker run -d \
-  --name aistudio-api \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  -v aistudio-api-data:/app/data \
-  ghcr.io/deconstructedcube/aistudio-api:latest
+aistudio
 ```
 
-Or run with Docker Compose:
+The menu offers foreground start, silent background start, stop, check for updates, and update. Ctrl+C stops a foreground service and returns to the menu. A silent service keeps running after the menu exits and writes no service logs or request dumps.
 
-```bash
-docker compose up -d
-```
+The default console address is `http://127.0.0.1:8000`. Import Cookies or an account bundle in the Accounts page. Updates cover application and management code, locked Python dependencies, and the declared browser version; an unchanged browser is reused. A running service is stopped briefly and restarted in its previous mode after a successful update.
 
-Open **`http://localhost:8080`** in your browser to access the Web Console.
+User configuration lives in `~/.config/aistudio-termux/`; existing account and statistics data remain in their original locations. Android may still terminate background processes.
 
----
+## Maintenance and documentation
 
-## Configuration & Environment Variables
+Installations follow `ReedSein/aistudio-api` only. Maintainers evaluate and test changes from the original project before bringing them into this fork.
 
-Open `http://localhost:8080` in your browser to access the Web Console.
+- [Paths, ports, configuration, updates and recovery](./docs/TERMUX.md)
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Wire protocol](./docs/WIRE_SPECIFICATION.md)
+- [BotGuard verification](./docs/BOTGUARD_VERIFICATION_CHAIN.md)
 
-### Environment Variables
-| Variable | Type | Default | Description |
-|---|---|---|---|
-| `AISTUDIO_PORT` | int | `8080` | HTTP service listening port |
-| `AISTUDIO_WEB_PASSWORD` | string | `""` | Web Console access password (also checks `AISTUDIO_ADMIN_PASSWORD`) |
-| `AISTUDIO_PROXY` | string | `""` | Outbound proxy URL (`http://`, `https://`, or `socks5://`) |
-| `AISTUDIO_DATA_DIR` | string | `data/` | Main data directory for persistent files (`/app/data` in Docker) |
-| `AISTUDIO_ACCOUNTS_DIR` | string | `data/accounts` | Directory for storing account credentials |
-| `AISTUDIO_STATS_FILE` | string | `data/stats.json` | Persistent storage file for model usage metrics |
-| `AISTUDIO_ROTATOR_STATE_FILE` | string | `data/rotator_state.json` | Persistent storage file for account 429 cooldowns and dispatch states |
-| `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | Path to model rules and default tools configuration YAML |
-| `AISTUDIO_PERSIST_STATS` | bool | `true` | Persist request and token usage metrics across service restarts |
-| `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | Persist account 429 rate limit dates & cooldowns across restarts |
-| `AISTUDIO_BROWSER_EXECUTABLE` | string | Auto | Path to CloakBrowser executable (`/opt/cloakbrowser/chrome` in Docker) |
-| `AISTUDIO_BROWSER_PORT` | int | `9222` | Chromium remote debugging port (CDP) |
-| `AISTUDIO_BROWSER_HEADLESS` | bool | `true` | Run Chromium in headless mode |
-| `AISTUDIO_BROWSER_IDLE_TIMEOUT` | int | `900` / `1800` | Browser idle reclamation timeout in seconds (900s on Termux, 1800s on Desktop; 0 disables) |
-| `AISTUDIO_PROOT_NAME` | string | `aistudio-api` | Dedicated proot-distro container name for Termux |
-| `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | Default text model |
-| `AISTUDIO_DEFAULT_IMAGE_MODEL` | string | `gemini-3.1-flash-image-preview` | Default image generation model |
-| `AISTUDIO_TIMEZONE` | string | Auto | Browser fingerprint & Wire protocol timezone (`America/Los_Angeles` by default) |
-| `AISTUDIO_LOCALE` | string | `en-US` | Browser fingerprint locale |
-| `AISTUDIO_DUMP_REQUESTS` | bool | `false` | Dump API request/response exchanges to console logs (enabled via `DEBUG=1`) |
-| `AISTUDIO_DUMP_FILE` | bool | `false` | Dump request/response exchanges to individual disk files |
-| `AISTUDIO_DUMP_DIR` | string | `dumps/` | Target directory for dumped exchange files |
-
----
+The gateway supports Gemini `/v1beta/...`, streaming, multimodal requests, function calling, account rotation, and a web console. The runtime uses pure Python CDP without Node.js, Playwright, or Selenium.
 
 ## API Usage Examples
 
@@ -246,7 +57,7 @@ Supported authentication methods:
 <summary><b>1. List Models</b></summary>
 
 ```bash
-curl http://localhost:8080/v1beta/models \
+curl http://localhost:8000/v1beta/models \
   -H "x-goog-api-key: your-api-key"
 ```
 </details>
@@ -255,7 +66,7 @@ curl http://localhost:8080/v1beta/models \
 <summary><b>2. Generate Content (Non-streaming)</b></summary>
 
 ```bash
-curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \
+curl http://localhost:8000/v1beta/models/gemini-3.7-flash:generateContent \
   -H "x-goog-api-key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -273,7 +84,7 @@ curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \
 <summary><b>3. Stream Generate Content (SSE)</b></summary>
 
 ```bash
-curl http://localhost:8080/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
+curl http://localhost:8000/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
   -H "x-goog-api-key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -300,7 +111,7 @@ client = genai.Client(
     api_key="your-api-key",
     http_options={
         "api_version": "v1beta",
-        "base_url": "http://localhost:8080",
+        "base_url": "http://localhost:8000",
     },
 )
 
@@ -332,7 +143,7 @@ client = genai.Client(
     api_key="your-api-key",
     http_options={
         "api_version": "v1beta",
-        "base_url": "http://localhost:8080",
+        "base_url": "http://localhost:8000",
     },
 )
 
@@ -377,7 +188,7 @@ if response.function_calls:
 
 ## Web Management Console
 
-The service includes a built-in static Web Console served at `http://localhost:8080`:
+The service includes a built-in static Web Console served at `http://localhost:8000`:
 
 - **Dashboard**: Real-time view of service health, per-model request stats, success rates, and rate-limit cooldown status.
 - **Accounts**: Import Cookie credentials (single text or bundle files), auto-probe multiple accounts, switch the active account, or reset rate limits.
@@ -386,40 +197,6 @@ The service includes a built-in static Web Console served at `http://localhost:8
 
 ---
 
-## Development & Testing
-
-Frontend code is located in `web/` (Vue 3 + TypeScript + Vite + Tailwind CSS):
-
-```bash
-cd web
-bun install
-bun run dev          # Start local Vite dev server (localhost:3000 -> 8080)
-bun run type-check   # Run TypeScript type check
-bun run lint         # Run ESLint check
-bun run build        # Build production assets into src/aistudio_api/static
-```
-
-Python quality checks and tests:
-
-```bash
-# Run code style & lint check
-uv run ruff check .
-# Run static type checking
-bun x pyright
-
-# Run test suite
-uv run pytest
-```
-
-Android companion app code style checks:
-
-```bash
-# Run Kotlin code style check (configured via ~/.zshrc)
-ktlint "android/app/src/main/java/**/*.kt"
-```
-
----
-
 ## License
 
-This project is licensed under the [MIT License](./LICENSE).
+Distributed under the [MIT License](./LICENSE), retaining the original project's license and attribution.
