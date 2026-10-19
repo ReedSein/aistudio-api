@@ -5,14 +5,17 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from aistudio_api.infrastructure.diagnostics.bundle import export_bundle
 from aistudio_api.infrastructure.diagnostics.store import DiagnosticError, get_store
 from aistudio_api.infrastructure.utils.logger import get_logger
+
+from .diagnostics_client import BrowserReport, read_client_report
 
 router = APIRouter(prefix="/diagnostics", tags=["diagnostics"])
 logger = get_logger("diagnostics")
@@ -35,9 +38,20 @@ def diagnostics_status() -> dict[str, object]:
 
 
 @router.post("/export", response_class=FileResponse)
-def download_diagnostics() -> FileResponse:
+async def download_diagnostics(request: Request) -> FileResponse:
+    report = await read_client_report(request)
+    return await run_in_threadpool(create_download, report)
+
+
+def create_download(report: BrowserReport | None = None) -> FileResponse:
     from aistudio_api.config import settings
 
+    if report is not None and not get_store().emit(
+        "client_diagnostic_report",
+        evidence_source="unverified_browser_report",
+        client_report=report.model_dump(mode="json", exclude_none=True),
+    ):
+        raise HTTPException(503, detail="浏览器诊断摘要未能保存，请先导出本地记录。")
     directory = tempfile.TemporaryDirectory(prefix="aistudio-diagnostics-")
     archive = Path(directory.name) / "aistudio-diagnostics.tar.gz"
     try:

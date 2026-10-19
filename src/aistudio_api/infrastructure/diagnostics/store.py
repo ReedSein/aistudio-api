@@ -23,6 +23,9 @@ SESSION_ID = uuid.uuid4().hex[:16]
 request_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "diagnostic_request_id", default=""
 )
+operation_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "diagnostic_client_operation_id", default=""
+)
 _thread_lock = threading.RLock()
 _stores: dict[tuple[str, int, int], DiagnosticStore] = {}
 _closed_directories: set[Path] = set()
@@ -253,6 +256,7 @@ class DiagnosticStore:
             "session_id": SESSION_ID,
             "pid": os.getpid(),
             "request_id": request_id.get(),
+            "operation_id": operation_id.get(),
             "event": event,
             **fields,
         }

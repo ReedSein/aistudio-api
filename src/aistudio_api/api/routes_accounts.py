@@ -13,6 +13,7 @@ from aistudio_api.api.dependencies import (
 )
 from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string
+from aistudio_api.infrastructure.diagnostics.store import get_store
 from aistudio_api.infrastructure.utils.common import mask_email
 
 if TYPE_CHECKING:
@@ -336,24 +337,49 @@ async def probe_and_import(
         probe_google_accounts_infinite,
     )
 
-    probed = await probe_google_accounts_infinite(req.cookies)
-    if not probed:
-        raise HTTPException(status_code=400, detail="未探测到有效已登录 Google 账号")
+    diagnostics = get_store()
+    stage = "probe"
+    saved_count = None
+    diagnostics.emit("account_import_start", stage=stage)
+    try:
+        probed = await probe_google_accounts_infinite(req.cookies)
+        diagnostics.emit("account_import_probe_end", probed_count=len(probed))
+        if not probed:
+            raise HTTPException(
+                status_code=400, detail="未探测到有效已登录 Google 账号"
+            )
 
-    storage_state = parse_cookie_string(req.cookies)
-    prefix = req.name_prefix.strip() if req.name_prefix else "Google Account"
-    import secrets
+        stage = "parse_cookies"
+        storage_state = parse_cookie_string(req.cookies)
+        prefix = req.name_prefix.strip() if req.name_prefix else "Google Account"
+        import secrets
 
-    cid = f"cookie_{secrets.token_hex(4)}"
-    metas = account_service.batch_import_accounts(
-        probed_list=probed,
-        storage_state=storage_state,
-        prefix=prefix,
-        cookie_id=cid,
-    )
-    imported_accounts = [to_account_response(account) for account in metas]
+        cid = f"cookie_{secrets.token_hex(4)}"
+        stage = "save"
+        metas = account_service.batch_import_accounts(
+            probed_list=probed,
+            storage_state=storage_state,
+            prefix=prefix,
+            cookie_id=cid,
+        )
+        saved_count = len(metas)
+        stage = "response_build"
+        imported_accounts = [to_account_response(account) for account in metas]
+    except BaseException as exc:
+        diagnostics.emit(
+            "account_import_failed",
+            stage=stage,
+            saved_count=saved_count,
+            error_type=type(exc).__name__,
+        )
+        raise
 
     log.info("探活与导入完成: 成功导入 %d 个账号", len(imported_accounts))
+    diagnostics.emit(
+        "account_import_completed",
+        imported_count=len(imported_accounts),
+        response_received_by_client="unknown",
+    )
     return ProbeAndImportResponse(
         imported_count=len(imported_accounts),
         accounts=imported_accounts,

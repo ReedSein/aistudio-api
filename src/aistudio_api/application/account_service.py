@@ -11,6 +11,7 @@ if TYPE_CHECKING:
         AccountStore,
     )
     from aistudio_api.infrastructure.gateway.session import BrowserSession
+from aistudio_api.infrastructure.diagnostics.store import get_store
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("account")
@@ -104,24 +105,51 @@ class AccountService:
     ) -> list[AccountMeta]:
         """批量导入探活到的账号列表。"""
         imported: list[AccountMeta] = []
-        for p in probed_list:
-            u_idx = str(p.get("auth_user") or "0")
-            acc_name = (
-                f"{prefix} (u/{u_idx})"
-                if len(probed_list) > 1 or u_idx != "0"
-                else prefix
-            )
-            account = self._store.save_account(
-                name=acc_name,
-                email=None,
-                storage_state=storage_state,
-                auth_user=u_idx,
-                cookie_id=cookie_id,
-            )
-            imported.append(account)
+        diagnostics = get_store()
+        stage = "save"
+        diagnostics.emit("account_import_save_start", expected_count=len(probed_list))
+        try:
+            for index, p in enumerate(probed_list):
+                u_idx = str(p.get("auth_user") or "0")
+                acc_name = (
+                    f"{prefix} (u/{u_idx})"
+                    if len(probed_list) > 1 or u_idx != "0"
+                    else prefix
+                )
+                diagnostics.emit("account_import_save_item", index=index)
+                account = self._store.save_account(
+                    name=acc_name,
+                    email=None,
+                    storage_state=storage_state,
+                    auth_user=u_idx,
+                    cookie_id=cookie_id,
+                )
+                imported.append(account)
+                diagnostics.emit(
+                    "account_import_account_saved",
+                    account_id=account.id,
+                    index=index,
+                    saved_count=len(imported),
+                )
 
-        if not self.get_active_account() and imported:
-            self.set_active_account(imported[0].id)
+            stage = "activate"
+            if not self.get_active_account() and imported:
+                self.set_active_account(imported[0].id)
+        except BaseException as exc:
+            diagnostics.emit(
+                "account_import_save_failed",
+                stage=stage,
+                saved_count=len(imported),
+                expected_count=len(probed_list),
+                account_ids=[account.id for account in imported],
+                error_type=type(exc).__name__,
+            )
+            raise
+        diagnostics.emit(
+            "account_import_saved",
+            saved_count=len(imported),
+            account_ids=[account.id for account in imported],
+        )
         return imported
 
     def get_account_auth_path(self, account_id: str) -> Path | None:

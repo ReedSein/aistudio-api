@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import re
 import time
 import traceback
 import uuid
@@ -12,7 +13,11 @@ from urllib.parse import parse_qsl
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from aistudio_api.infrastructure.diagnostics.redaction import redact_url, sanitize
-from aistudio_api.infrastructure.diagnostics.store import get_store, request_id
+from aistudio_api.infrastructure.diagnostics.store import (
+    get_store,
+    operation_id,
+    request_id,
+)
 from aistudio_api.infrastructure.utils.logger import (
     dump_request_exchange,
     get_logger,
@@ -55,9 +60,18 @@ class DiagnosticsMiddleware:
         pending = ""
         sequence = 0
         headers = {
-            k.decode("latin-1"): v.decode("latin-1")
+            k.decode("latin-1").lower(): v.decode("latin-1")
             for k, v in scope.get("headers", [])
         }
+        supplied_operation = headers.get("x-aistudio-operation-id", "")
+        client_operation = (
+            supplied_operation
+            if re.fullmatch(r"[a-f0-9]{32}", supplied_operation)
+            else ""
+        )
+        operation_context = operation_id.set(client_operation)
+        if supplied_operation and not client_operation:
+            headers["x-aistudio-operation-id"] = "[invalid operation ID omitted]"
         safe_headers = sanitize(headers)
         query = scope.get("query_string", b"").decode("latin-1")
         safe_query = sanitize(
@@ -235,4 +249,5 @@ class DiagnosticsMiddleware:
                         is_stream=streaming,
                     )
             finally:
+                operation_id.reset(operation_context)
                 request_id.reset(context)

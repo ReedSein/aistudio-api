@@ -25,6 +25,9 @@ _NOTICE = """AI Studio API 诊断包
 认证头、Cookie、API 密钥等凭据已按结构与已知格式脱敏；未打包账号文件或浏览器登录目录。
 manifest.json 列出采集截止时间、文件摘要、缺失和清理情况，environment.json 是环境白名单摘要。
 logs/ 中 JSONL 每行是一条事件；用 request_id 关联一次请求、session_id 关联一次进程会话。
+operation_id 关联浏览器操作与服务端请求，只是客户端提供的辅助编号，不是成功或身份凭据。
+client_diagnostic_report 是未经服务端独立核验的浏览器摘要；其清理、存储错误也列入缺失清单。
+account_import_account_saved 记录逐项保存；account_import_completed 不证明浏览器已收到回执。
 http_request_body/http_response_body 的 text 按文件时间、行顺序、sequence/part 重组正文。
 http_end 区分 completed、client_disconnected、cancelled、timeout、exception 和 incomplete。
 缺少 http_end 或 response_complete=false 的请求不能当成完整成功；进程可能被系统强杀。
@@ -219,6 +222,19 @@ def _safe_source(path: Path, data: bytes) -> tuple[bytes, list[str]]:
             except (ValueError, UnicodeError) as exc:
                 issues.append(f"line {number}: {type(exc).__name__}")
                 continue
+            if (
+                isinstance(value, dict)
+                and value.get("event") == "client_diagnostic_report"
+            ):
+                report = value.get("client_report")
+                if isinstance(report, dict):
+                    if report.get("storage_error") is True:
+                        issues.append(f"line {number}: browser_storage_error")
+                    pruned = report.get("pruned_events")
+                    if isinstance(pruned, int) and pruned > 0:
+                        issues.append(
+                            f"line {number}: browser_history_pruned ({pruned} events)"
+                        )
             records.append(sanitized_json(value))
         return ("\n".join(records) + "\n").encode(), issues
     text = data.decode("utf-8", errors="strict")
