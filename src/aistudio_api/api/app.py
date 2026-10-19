@@ -24,10 +24,12 @@ from aistudio_api.infrastructure.utils.logger import (
 
 from .dependencies import require_api_key, require_web_auth
 from .diagnostics_middleware import DiagnosticsMiddleware
+from .openai_errors import error_payload, is_openai_path
 from .routes_accounts import router as accounts_router
 from .routes_diagnostics import router as diagnostics_router
 from .routes_gemini import router as gemini_router
 from .routes_models import router as models_router
+from .routes_openai import router as openai_router
 from .routes_system import (
     protected_router as system_protected_router,
     public_router as system_public_router,
@@ -142,11 +144,15 @@ app.include_router(
 )
 app.include_router(gemini_router, dependencies=[Depends(require_api_key)])
 app.include_router(models_router, dependencies=[Depends(require_api_key)])
+app.include_router(openai_router, dependencies=[Depends(require_api_key)])
 app.include_router(userscript_router)
 
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    if is_openai_path(_request.url.path):
+        status, payload = error_payload(exc)
+        return JSONResponse(status_code=status, content=payload, headers=exc.headers)
     code, msg, status_str = classify_gemini_error_payload(exc)
     return JSONResponse(
         status_code=code,
@@ -165,6 +171,18 @@ async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONR
 async def validation_exception_handler(
     _request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    if is_openai_path(_request.url.path):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "message": "Invalid request fields",
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "invalid_request_error",
+                }
+            },
+        )
     code, msg, status_str = 400, str(exc), "INVALID_ARGUMENT"
     return JSONResponse(
         status_code=code,
@@ -210,6 +228,7 @@ async def spa_navigation_middleware(request: Request, call_next):
         (
             "/api",
             "/v1beta",
+            "/v1/",
             "/auth",
             "/assets",
             "/static",

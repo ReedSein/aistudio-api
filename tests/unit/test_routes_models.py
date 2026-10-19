@@ -42,11 +42,16 @@ async def test_get_single_model_returns_model_object(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_v1_models_endpoint_is_removed(monkeypatch):
+async def test_v1_models_returns_openai_catalog(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset())
     async with _build_client() as client:
         response = await client.get("/v1/models")
-        assert response.status_code == 404
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["object"] == "list"
+        assert payload["data"]
+        assert payload["data"][0]["object"] == "model"
+        assert not payload["data"][0]["id"].startswith("models/")
 
 
 @pytest.mark.asyncio

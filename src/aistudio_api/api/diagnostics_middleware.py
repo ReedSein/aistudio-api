@@ -41,7 +41,9 @@ class DiagnosticsMiddleware:
         identifier = uuid.uuid4().hex
         context = request_id.set(identifier)
         start = time.perf_counter()
-        generation = path.startswith("/v1beta/") and ":" in path
+        generation = (path.startswith("/v1beta/") and ":" in path) or path.rstrip(
+            "/"
+        ) == "/v1/chat/completions"
         legacy_enabled = generation and is_dump_requests_enabled()
         legacy_body: str | None = None
         legacy_response: list[bytes] = []
