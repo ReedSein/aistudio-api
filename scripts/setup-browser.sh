@@ -143,6 +143,12 @@ setup_termux() {
     mkdir -p "${CLOAK_ROOT}"
     ARCHIVE_NAME="cloakbrowser-linux-arm64.tar.gz"
     DOWNLOAD_URL="https://github.com/CloakHQ/cloakbrowser/releases/download/chromium-v${CHROMIUM_VERSION}/${ARCHIVE_NAME}"
+    local sha256_file="${SCRIPT_DIR}/cloakbrowser-linux-arm64.sha256"
+    local archive_sha256=""
+    if [[ ! -f "${sha256_file}" || -L "${sha256_file}" ]] || ! read -r archive_sha256 < "${sha256_file}" || [[ ! "${archive_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+        log "Missing or invalid browser SHA-256 file: ${sha256_file}"
+        exit 1
+    fi
 
     [[ ! -L "${CHROME_DIR_HOST}" ]] || { log 'Browser version directory is a symbolic link.'; exit 1; }
     if [[ -x "${CHROME_DIR_HOST}/chrome" && -f "${CHROME_DIR_HOST}/icudtl.dat" ]] && CLOAKBROWSER_PROJECT_DIR="${PROJECT_ROOT}" AISTUDIO_PROOT_NAME="${PROOT_NAME}" bash "${SCRIPT_DIR}/cloakbrowser_termux/run-chrome.sh" --version; then
@@ -161,11 +167,17 @@ setup_termux() {
         fi
         log "Downloading CloakBrowser ARM64 (~200MB)..."
         [[ -n "${TMPDIR:-}" && -w "${TMPDIR}" ]] || { log "TMPDIR must be writable."; exit 1; }
-        TMP="$(mktemp -d "${TMPDIR%/}/aistudio-browser.XXXXXX")"
-        trap 'rm -rf "${TMP}"' EXIT
-        bash "${SCRIPT_DIR}/install-termux.sh" --download "${DOWNLOAD_URL}" "${TMP}/${ARCHIVE_NAME}"
+        local download_dir="${CLOAK_ROOT}/downloads"
+        local archive_path="${download_dir}/cloakbrowser-${CHROMIUM_VERSION}-linux-arm64.tar.gz"
+        [[ ! -L "${download_dir}" ]] || { log 'Browser download directory is a symbolic link.'; exit 1; }
+        mkdir -p "${download_dir}"
+        if [[ -f "${archive_path}" && ! -L "${archive_path}" && ! -e "${archive_path}.part" ]]; then
+            mv -- "${archive_path}" "${archive_path}.part"
+        fi
+        bash "${SCRIPT_DIR}/install-termux.sh" --download "${DOWNLOAD_URL}" "${archive_path}" "${archive_sha256}"
         uv run --no-sync --no-python-downloads --project "${PROJECT_ROOT}" python \
-            "${SCRIPT_DIR}/unpack_browser.py" "${TMP}/${ARCHIVE_NAME}" "${CHROME_DIR_HOST}"
+            "${SCRIPT_DIR}/unpack_browser.py" "${archive_path}" "${CHROME_DIR_HOST}"
+        rm -f -- "${archive_path}"
         log "CloakBrowser extracted to ${CHROME_DIR_HOST}"
     fi
 

@@ -10,7 +10,7 @@ Targets Android ARM64 Termux with an interactive Chinese management menu, one-co
 
 The default location is `~/aistudio-api-termux`, independent of the current directory:
 
-Run in an interactive Termux terminal. The bootstrap uses Termux's bundled APT downloader, so a broken curl does not prevent fetching the installer. Package repair or upgrades require confirmation and may update tools shared with other Termux projects.
+Run in an interactive Termux terminal. The bootstrap uses Termux's bundled APT downloader, so a broken curl does not prevent fetching the installer. If the Termux package repository is unreachable, the installer can switch to mirrors in Chinese Mainland on confirmation; package repair or upgrades also require confirmation and affect tools shared with other Termux projects.
 
 ```bash
 bash -c '
@@ -44,7 +44,7 @@ Public installs and updates use the maintainer-selected latest release, tagged `
 
 Rerun the same command to resume installation or reinstall at the same location using retained data. Unrelated directories, foreign repositories, and local source edits are preserved and reported. After the repository rename to aistudio-api-termux the previous address is still recognised; rerunning the new installer continues an older installation and keeps its existing directory and browser container.
 
-After an interrupted first install, rerun the same command. Usable source and browser files are reused; identified incomplete downloads and broken project environments are rebuilt. Installer downloads, release lookups, source transfers, and browser downloads make at most three attempts and report the original error on persistent failure.
+After an interrupted first install, rerun the same command. Usable source and browser files are reused; incomplete browser downloads resume from existing bytes and are verified with SHA-256 before extraction, while broken project environments and invalid caches are rebuilt. Installer downloads, release lookups, source transfers, and browser downloads make at most three attempts per run and report the original error on persistent failure.
 
 ## Local development and testing
 

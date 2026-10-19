@@ -98,7 +98,7 @@ class Updater:
         )
         if result.returncode:
             raise ManagerError(
-                f"更新环境失败：setup-termux.sh，退出码 {result.returncode}。"
+                f"准备运行环境失败：setup-termux.sh，退出码 {result.returncode}。"
             )
 
     def update(self) -> tuple[bool, subprocess.Popen[bytes] | None]:

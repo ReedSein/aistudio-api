@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -33,6 +34,8 @@ def browser_install(tmp_path):
             info = tarfile.TarInfo(name)
             info.size = len(content)
             bundle.addfile(info, io.BytesIO(content))
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (root / "scripts/cloakbrowser-linux-arm64.sha256").write_text(f"{digest}\n")
     binary = tmp_path / "bin"
     binary.mkdir()
     scripts = {
@@ -63,9 +66,26 @@ elif args[0] == "login":
         "curl": """import os, sys
 from pathlib import Path
 p = Path(os.environ["TEST_ROOT"])
-with (p / "downloads").open("a") as log: log.write("download\\n")
-Path(sys.argv[sys.argv.index("-o") + 1]).write_bytes((p / "browser.tar.gz").read_bytes())
+payload = (p / "browser.tar.gz").read_bytes()
+target = Path(sys.argv[sys.argv.index("-o") + 1])
+resumed = "-C" in sys.argv
+with (p / "downloads").open("a") as log:
+    log.write("resume\\n" if resumed else "download\\n")
+mode = os.getenv("TEST_BROWSER_DOWNLOAD", "")
+if mode == "abort":
+    target.write_bytes(payload[: len(payload) // 2])
+    sys.stderr.write("curl: (56) Recv failure: Software caused connection abort\\n")
+    sys.exit(56)
+if mode == "corrupt":
+    target.write_bytes(b"corrupted archive")
+    sys.exit(0)
+if resumed:
+    with target.open("ab") as handle:
+        handle.write(payload[target.stat().st_size :])
+else:
+    target.write_bytes(payload)
 """,
+        "sleep": "import sys; sys.exit(0)\n",
         "uv": """import os, sys
 os.execv(sys.executable, [sys.executable, *sys.argv[sys.argv.index("python") + 1:]])
 """,
@@ -112,6 +132,51 @@ def test_first_install_replaces_a_partial_browser_then_reuses_the_complete_cache
         assert result.returncode == 0, result.stderr
     assert (cache / "icudtl.dat").is_file()
     assert (state / "downloads").read_text().splitlines() == ["download"]
+    assert not list((root / ".cloakbrowser/downloads").iterdir())
+
+
+def test_browser_download_resumes_across_reruns_and_cleans_archive(browser_install):
+    root, state, env = browser_install
+    env["TEST_BROWSER_DOWNLOAD"] = "abort"
+    first = prepare_browser(root, env)
+    assert first.returncode == 56
+    part = (
+        root / ".cloakbrowser/downloads/cloakbrowser-9.8.7.6.5-linux-arm64.tar.gz.part"
+    )
+    assert part.is_file()
+    env.pop("TEST_BROWSER_DOWNLOAD")
+    second = prepare_browser(root, env)
+    assert second.returncode == 0, second.stderr
+    assert (root / ".cloakbrowser/chromium-9.8.7.6.5/icudtl.dat").is_file()
+    assert not part.exists()
+    assert not list((root / ".cloakbrowser/downloads").iterdir())
+    assert (state / "downloads").read_text().splitlines()[-1] == "resume"
+
+
+def test_browser_download_rejects_corrupted_digest_and_removes_part(browser_install):
+    root, _, env = browser_install
+    env["TEST_BROWSER_DOWNLOAD"] = "corrupt"
+    result = prepare_browser(root, env)
+    assert result.returncode != 0
+    assert "SHA-256 verification" in result.stderr
+    assert not (root / ".cloakbrowser/chromium-9.8.7.6.5").exists()
+    assert not list((root / ".cloakbrowser/downloads").iterdir())
+
+
+@pytest.mark.parametrize("invalid_content", [None, "not-a-valid-sha256\n"])
+def test_browser_setup_stops_when_sha256_file_is_missing_or_invalid(
+    browser_install, invalid_content
+):
+    root, state, env = browser_install
+    sha_file = root / "scripts/cloakbrowser-linux-arm64.sha256"
+    if invalid_content is None:
+        sha_file.unlink()
+    else:
+        sha_file.write_text(invalid_content)
+    result = prepare_browser(root, env)
+    assert result.returncode != 0
+    assert "SHA-256" in result.stderr
+    assert not (state / "downloads").exists()
 
 
 def test_first_install_resumes_its_own_interrupted_container(browser_install):

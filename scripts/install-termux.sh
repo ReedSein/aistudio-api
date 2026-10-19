@@ -5,6 +5,11 @@ set -euo pipefail
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
 NETWORK_TMP=""
 CLONE_STAGE=""
+PART_FILE=""
+TERMUX_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+CHOSEN_MIRRORS="${TERMUX_PREFIX}/etc/termux/chosen_mirrors"
+CN_MIRRORS="${TERMUX_PREFIX}/etc/termux/mirrors/chinese_mainland"
+MIRROR_PROMPTED=false
 
 cleanup() {
     [[ -z "${NETWORK_TMP}" ]] || rm -rf -- "${NETWORK_TMP}"
@@ -15,13 +20,24 @@ trap cleanup EXIT
 
 network_tmp() {
     [[ -n "${TMPDIR:-}" && -w "${TMPDIR}" ]] || { echo "TMPDIR must be writable." >&2; exit 1; }
-    NETWORK_TMP="$(mktemp -d "${TMPDIR%/}/aistudio-network.XXXXXX")"
+    [[ -n "${NETWORK_TMP}" ]] || NETWORK_TMP="$(mktemp -d "${TMPDIR%/}/aistudio-network.XXXXXX")"
+}
+
+verify_sha256() {
+    local digest _
+    read -r digest _ < <(sha256sum < "$1") || return 1
+    [[ "${digest}" == "$2" ]]
 }
 
 curl_retry() {
     local attempt status output
+    local -a resume_args=()
     for attempt in 1 2 3; do
-        if output=$(LC_ALL=C curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --connect-timeout 15 "$@" 2>"${NETWORK_TMP}/error"); then
+        resume_args=()
+        if [[ -n "${PART_FILE:-}" && -s "${PART_FILE}" ]]; then
+            resume_args=(-C -)
+        fi
+        if output=$(LC_ALL=C curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --connect-timeout 15 "${resume_args[@]}" "$@" 2>"${NETWORK_TMP}/error"); then
             printf '%s' "${output}"
             return 0
         else
@@ -30,6 +46,9 @@ curl_retry() {
         cat "${NETWORK_TMP}/error" >&2
         case "${status}" in
             5|6|7|18|28|35|52|55|56|92) ;;
+            33)
+                [[ -n "${PART_FILE:-}" && -e "${PART_FILE}" ]] || return "${status}"
+                rm -f -- "${PART_FILE}" ;;
             22) grep -Eq 'error: (408|429|50[0234]|52[24])' "${NETWORK_TMP}/error" || return "${status}" ;;
             *) return "${status}" ;;
         esac
@@ -93,6 +112,85 @@ host_health() {
     return "${failed}"
 }
 
+termux_repo_urls() {
+    local file found=false url
+    for file in \
+        "${TERMUX_PREFIX}/etc/apt/sources.list" \
+        "${TERMUX_PREFIX}/etc/apt/sources.list.d/x11.list" \
+        "${TERMUX_PREFIX}/etc/apt/sources.list.d/root.list"; do
+        [[ -f "${file}" ]] || continue
+        while read -r url; do
+            [[ -n "${url}" ]] || continue
+            found=true
+            printf '%s\n' "${url%/}"
+        done < <(grep -E '^[[:space:]]*deb[[:space:]]+' "${file}" | grep -oE 'https?://[^[:space:]]+' || true)
+    done
+    if [[ "${found}" == false ]]; then
+        printf '%s\n' \
+            "https://packages.termux.dev/apt/termux-main" \
+            "https://packages-cf.termux.dev/apt/termux-main"
+    fi
+}
+
+apt_fetch_failed() {
+    local log_file="$1" url
+    while read -r url; do
+        if grep -Fq "Failed to fetch ${url}" "${log_file}"; then
+            return 0
+        fi
+    done < <(termux_repo_urls)
+    return 1
+}
+
+using_chinese_mirrors() {
+    local target
+    target="$(realpath "${CHOSEN_MIRRORS}" 2>/dev/null || readlink "${CHOSEN_MIRRORS}" 2>/dev/null || true)"
+    [[ "${target}" == "${CN_MIRRORS}" || "${target}" == "${CN_MIRRORS}/"* ]]
+}
+
+run_apt() {
+    network_tmp
+    local apt_log="${NETWORK_TMP}/apt.log" status=0 answer
+    if LC_ALL=C apt-get "$@" >"${apt_log}" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+    cat "${apt_log}" >&2
+    if ! apt_fetch_failed "${apt_log}"; then
+        return "${status}"
+    fi
+    if [[ "${MIRROR_PROMPTED}" == false && -d "${CN_MIRRORS}" && ! -L "${CN_MIRRORS}" && -t 0 ]] && ! using_chinese_mirrors; then
+        MIRROR_PROMPTED=true
+        printf '\n[install] Cannot reach the current Termux package repository.\n' >&2
+        read -r -p 'Switch Termux packages to mirrors in Chinese Mainland? [y/N] ' answer || answer=""
+        case "${answer}" in
+            y|Y|yes|YES)
+                if ! host_tool curl; then
+                    echo '[install] Cannot switch Termux mirrors automatically because curl cannot run. Run termux-change-repo or repair curl first.' >&2
+                    return 1
+                fi
+                if [[ -e "${CHOSEN_MIRRORS}" && ! -L "${CHOSEN_MIRRORS}" ]]; then
+                    printf '[install] Cannot update mirror link because %s is not a symbolic link.\n' "${CHOSEN_MIRRORS}" >&2
+                    return 1
+                fi
+                mkdir -p -- "$(dirname "${CHOSEN_MIRRORS}")"
+                rm -f -- "${CHOSEN_MIRRORS}"
+                ln -s -- "${CN_MIRRORS}" "${CHOSEN_MIRRORS}"
+                if ! TERMUX_APP_PACKAGE_MANAGER=apt pkg --check-mirror update; then
+                    echo '[install] Failed to switch Termux mirrors with pkg --check-mirror update.' >&2
+                    return 1
+                fi
+                echo '[install] Switched Termux package mirrors to Chinese Mainland (run termux-change-repo to change later).' >&2
+                run_apt "$@"
+                return $? ;;
+        esac
+    fi
+    MIRROR_PROMPTED=true
+    echo '[install] Termux package repository is unreachable. Run termux-change-repo (Mirrors in Chinese Mainland) or check your VPN/proxy, then rerun the installer.' >&2
+    return "${status}"
+}
+
 prepare_host() {
     local force="${1:-false}" healthy=true audit plan plan_ok=true answer package
     local -a broken=()
@@ -101,7 +199,7 @@ prepare_host() {
     if [[ "${force}" == false && "${healthy}" == true && -z "${audit}" ]]; then
         return 0
     fi
-    apt-get update
+    run_apt update
     if plan="$(LC_ALL=C apt-get --simulate dist-upgrade 2>&1)"; then
         if [[ "${healthy}" == true && -z "${audit}" ]] && ! grep -Eq '^(Inst|Conf|Remv) ' <<<"${plan}"; then
             return 0
@@ -123,21 +221,21 @@ prepare_host() {
     if [[ -n "${audit}" ]]; then
         if ! dpkg --configure -a; then
             echo '[install] Package configuration failed; repairing dependencies with APT.' >&2
-            apt-get --fix-broken install -y
+            run_apt --fix-broken install -y
             dpkg --configure -a
         fi
     fi
     if [[ "${plan_ok}" == false || -n "${audit}" ]]; then
-        apt-get --fix-broken install -y
+        run_apt --fix-broken install -y
     fi
-    apt-get dist-upgrade -y
-    apt-get install -y "${HOST_PACKAGES[@]}"
+    run_apt dist-upgrade -y
+    run_apt install -y "${HOST_PACKAGES[@]}"
     for package in "${HOST_PACKAGES[@]}"; do
         host_tool "${package}" || broken+=("${package}")
     done
     if [[ ${#broken[@]} -gt 0 ]]; then
         printf '[install] Reinstalling packages that still cannot run: %s\n' "${broken[*]}" >&2
-        apt-get install --reinstall -y "${broken[@]}"
+        run_apt install --reinstall -y "${broken[@]}"
     fi
     host_health || return 1
     audit="$(dpkg --audit)"
@@ -148,10 +246,28 @@ prepare_host() {
 case "${1:-}" in
     --prepare-host) require_termux; prepare_host; exit $? ;;
     --download)
-        [[ $# == 3 && "$2" == https://* && ! -e "$3" && ! -L "$3" ]] || { echo 'Expected HTTPS URL and a new download destination.' >&2; exit 2; }
+        [[ $# == 4 && "$2" == https://* && ! -e "$3" && ! -L "$3" && "$4" =~ ^[0-9a-f]{64}$ ]] || {
+            echo 'Expected HTTPS URL, a new download destination, and a 64-character lowercase SHA-256.' >&2
+            exit 2
+        }
+        PART_FILE="$3.part"
+        [[ ! -L "${PART_FILE}" && ( ! -e "${PART_FILE}" || -f "${PART_FILE}" ) ]] || {
+            echo "Refusing to use non-regular partial download file: ${PART_FILE}" >&2
+            exit 1
+        }
+        mkdir -p -- "$(dirname "$3")"
+        if [[ -f "${PART_FILE}" ]] && verify_sha256 "${PART_FILE}" "$4"; then
+            mv -- "${PART_FILE}" "$3"
+            exit 0
+        fi
         network_tmp
-        curl_retry --max-time 1800 --speed-limit 1024 --speed-time 60 -o "${NETWORK_TMP}/payload" "$2"
-        mv -- "${NETWORK_TMP}/payload" "$3"
+        curl_retry --max-time 1800 --speed-limit 1024 --speed-time 60 -o "${PART_FILE}" "$2"
+        if ! verify_sha256 "${PART_FILE}" "$4"; then
+            rm -f -- "${PART_FILE}"
+            echo "Downloaded file failed SHA-256 verification: $3" >&2
+            exit 1
+        fi
+        mv -- "${PART_FILE}" "$3"
         exit 0 ;;
     --git) shift; [[ $# -gt 0 ]] || { echo 'Missing Git operation.' >&2; exit 2; }; network_tmp; git_retry "$@"; exit $? ;;
 esac
