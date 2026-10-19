@@ -1,12 +1,15 @@
 // ==UserScript==
 // @name         AI Studio Cookie 抓取推送 (aistudio-api)
 // @namespace    https://github.com/ReedSein/aistudio-api-termux
-// @version      0.1.2
+// @version      0.1.3
 // @description  在 aistudio.google.com 抓取登录 Cookie，推送到自家 aistudio-api 服务并探活导入全部已登录账号
 // @author       ReedSein
 // @match        https://aistudio.google.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_listValues
+// @grant        GM_deleteValue
+// @grant        GM_info
 // @grant        GM_xmlhttpRequest
 // @grant        GM_cookie
 // @grant        GM_registerMenuCommand
@@ -45,6 +48,157 @@
   const DEFAULT_SERVER = 'http://127.0.0.1:11451';
   const PUSH_TIMEOUT_MS = 300000;
   const HOST_ID = 'aistudio-cookie-helper';
+  const SCRIPT_VERSION = '0.1.3';
+  const DIAG_PREFIX = 'aistudio_diagnostic_event_v1_';
+  const DIAG_META = 'aistudio_diagnostic_meta_v1';
+  const DIAG_MAX_BYTES = 1024 * 1024;
+  const DIAG_MAX_AGE = 7 * 86400000;
+  const EVENT_STAGES = ['script_start', 'cookie_start', 'cookie_end', 'request_start', 'request_callback', 'request_settled', 'result', 'export_start', 'export_result', 'unexpected_error'];
+  const EVENT_FIELDS = ['id', 'session_id', 'operation_id', 'timestamp', 'script_version', 'sequence', 'stage', 'callback', 'outcome', 'reason', 'elapsed_ms', 'status', 'ready_state', 'loaded_bytes', 'response_bytes', 'request_id', 'cookie_count', 'imported_count', 'missing_cookie_names', 'gm_supported', 'gm_failed', 'enhanced', 'error_type', 'error_stack', 'server_origin', 'duplicate_callback'];
+  let storageError = false;
+  let memoryEvents = [];
+  let sequence = 0;
+  let downloadUrl = null;
+
+  function identifier() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+  }
+
+  let sessionId;
+
+  function jsonBytes(value) {
+    return new TextEncoder().encode(JSON.stringify(value)).length;
+  }
+
+  function storedBytes(event) {
+    return jsonBytes(event) + DIAG_PREFIX.length + event.id.length + 4;
+  }
+
+  function errorDetails(error) {
+    const name = error && typeof error.name === 'string' && /^[A-Za-z]{1,64}$/.test(error.name) ? error.name : 'Error';
+    // Stack frames help locate code; exception messages and URL credentials/query do not belong in diagnostics.
+    const frames = error && typeof error.stack === 'string' ? error.stack.split('\n').slice(1) : [];
+    const locations = frames.flatMap(frame => {
+      const match = frame.match(/:(\d+):(\d+)\)?$/);
+      return match ? ['at [script]:' + match[1] + ':' + match[2]] : [];
+    });
+    let stack = '';
+    for (const location of locations) {
+      const next = stack ? stack + '\n' + location : location;
+      if (next.length > 8192) break;
+      stack = next;
+    }
+    return { error_type: name, error_stack: stack };
+  }
+
+  function validEvent(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    if (Object.keys(value).some(key => !EVENT_FIELDS.includes(key))) return false;
+    if (![value.id, value.session_id, value.operation_id].every(id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id))) return false;
+    if (!EVENT_STAGES.includes(value.stage) || typeof value.timestamp !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.timestamp) || !Number.isFinite(Date.parse(value.timestamp))) return false;
+    if (!Number.isSafeInteger(value.sequence) || value.sequence < 0 || typeof value.script_version !== 'string' || value.script_version.length > 32 || !/^\d+\.\d+\.\d+$/.test(value.script_version)) return false;
+    const enums = {
+      callback: ['load', 'error', 'timeout', 'abort', 'ready_state', 'progress', 'throw'],
+      outcome: ['ok', 'unconfirmed', 'auth', 'http', 'no_cookies', 'local_only', 'combined', 'error'],
+      reason: ['network_error', 'timeout', 'aborted', 'invalid_json', 'invalid_response', 'unexpected_error', 'local_export', 'archive_rejected', 'download_failed']
+    };
+    for (const [key, choices] of Object.entries(enums)) if (key in value && !choices.includes(value[key])) return false;
+    const integers = { status: 599, ready_state: 4, loaded_bytes: Number.MAX_SAFE_INTEGER, response_bytes: Number.MAX_SAFE_INTEGER, cookie_count: 10000, imported_count: 10000 };
+    for (const [key, maximum] of Object.entries(integers)) if (key in value && (!Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > maximum)) return false;
+    if ('elapsed_ms' in value && (!Number.isFinite(value.elapsed_ms) || value.elapsed_ms < 0 || value.elapsed_ms > DIAG_MAX_AGE)) return false;
+    for (const key of ['gm_supported', 'gm_failed', 'enhanced', 'duplicate_callback']) if (key in value && typeof value[key] !== 'boolean') return false;
+    if ('request_id' in value && (typeof value.request_id !== 'string' || !/^[a-f0-9]{32}$/.test(value.request_id))) return false;
+    if ('error_type' in value && (typeof value.error_type !== 'string' || !/^[A-Za-z]{1,64}$/.test(value.error_type))) return false;
+    if ('error_stack' in value && (typeof value.error_stack !== 'string' || value.error_stack.length > 8192 || !/^(?:at \[script\]:\d+:\d+(?:\n|$))*$/.test(value.error_stack))) return false;
+    if ('missing_cookie_names' in value && (!Array.isArray(value.missing_cookie_names) || value.missing_cookie_names.length > 8 || value.missing_cookie_names.some(name => !CORE_COOKIE_NAMES.includes(name)))) return false;
+    if ('server_origin' in value) {
+      try {
+        const origin = new URL(value.server_origin);
+        if (typeof value.server_origin !== 'string' || value.server_origin.length > 512 || !['http:', 'https:'].includes(origin.protocol) || origin.origin !== value.server_origin) return false;
+      } catch (error) { return false; }
+    }
+    return jsonBytes(value) <= 16384;
+  }
+
+  function diagnosticRecords() {
+    const events = new Map(memoryEvents.map(event => [event.id, event]));
+    const storedIds = new Set();
+    try {
+      for (const key of GM_listValues()) {
+        if (!new RegExp('^' + DIAG_PREFIX + '[a-f0-9]{32}$').test(key)) continue;
+        const event = GM_getValue(key, null);
+        if (validEvent(event) && key === DIAG_PREFIX + event.id) { events.set(event.id, event); storedIds.add(event.id); }
+        else {
+          storageError = true;
+          GM_deleteValue(key);
+        }
+      }
+      memoryEvents = memoryEvents.filter(event => !storedIds.has(event.id));
+    } catch (error) {
+      storageError = true;
+    }
+    return Array.from(events.values()).sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.session_id.localeCompare(b.session_id) || a.sequence - b.sequence);
+  }
+
+  function diagnosticMeta() {
+    try {
+      const stored = GM_getValue(DIAG_META, {});
+      return {
+        pruned_events: Number.isSafeInteger(stored.pruned_events) && stored.pruned_events >= 0 ? stored.pruned_events : 0,
+        pruned_bytes: Number.isSafeInteger(stored.pruned_bytes) && stored.pruned_bytes >= 0 ? stored.pruned_bytes : 0,
+        storage_error: storageError || stored.storage_error === true
+      };
+    } catch (error) {
+      storageError = true;
+      return { pruned_events: 0, pruned_bytes: 0, storage_error: true };
+    }
+  }
+
+  function retainedEvents() {
+    const events = diagnosticRecords();
+    let bytes = events.reduce((sum, event) => sum + storedBytes(event), 0);
+    const meta = diagnosticMeta();
+    let removed = 0;
+    while (events.length && (Date.parse(events[0].timestamp) < Date.now() - DIAG_MAX_AGE || bytes > DIAG_MAX_BYTES - 8192 || events.length > 5000)) {
+      const event = events.shift();
+      const size = storedBytes(event);
+      bytes -= size;
+      removed += 1;
+      meta.pruned_events += 1;
+      meta.pruned_bytes += size;
+      memoryEvents = memoryEvents.filter(row => row.id !== event.id);
+      try { GM_deleteValue(DIAG_PREFIX + event.id); } catch (error) { storageError = true; }
+    }
+    if (removed || storageError) {
+      meta.storage_error = meta.storage_error || storageError;
+      try { GM_setValue(DIAG_META, meta); } catch (error) { storageError = true; }
+    }
+    return events;
+  }
+
+  function record(stage, operation, fields = {}) {
+    const event = { id: identifier(), session_id: sessionId, operation_id: operation, timestamp: new Date().toISOString(), script_version: SCRIPT_VERSION, sequence: sequence++, stage, ...fields };
+    memoryEvents.push(event);
+    try {
+      GM_setValue(DIAG_PREFIX + event.id, event);
+    } catch (error) { storageError = true; }
+    retainedEvents();
+    if (els && els.diagnosticsHint && storageError) els.diagnosticsHint.textContent = '本地诊断保存存在错误，请在关闭页面前导出；历史记录可能不完整。';
+  }
+
+  function browserReport() {
+    const events = retainedEvents();
+    const info = typeof GM_info === 'object' && GM_info ? GM_info : {};
+    return {
+      schema_version: 1, script_version: SCRIPT_VERSION,
+      browser: String(navigator.userAgent || 'unknown').slice(0, 256),
+      manager: String(info.scriptHandler || 'unknown').slice(0, 64),
+      manager_version: String(info.version || 'unknown').slice(0, 64),
+      ...diagnosticMeta(), events
+    };
+  }
 
   const CORE_COOKIE_NAMES = [
     'SID',
@@ -187,22 +341,54 @@
     return server.replace(/\/+$/, '');
   }
 
-  function postJSON(url, password, payload) {
+  function postJSON(url, password, payload, operation, responseType = 'text') {
     return new Promise((resolve) => {
+      const started = performance.now();
+      let settled = false;
+      let previousState = -1;
       const headers = { 'Content-Type': 'application/json' };
       if (password) headers.Authorization = 'Bearer ' + password;
-      GM_xmlhttpRequest({
+      headers['X-Aistudio-Operation-ID'] = operation;
+      let origin;
+      try { origin = new URL(url).origin; } catch (error) { origin = undefined; }
+      const metadata = response => {
+        const data = { elapsed_ms: Math.max(0, performance.now() - started) };
+        if (response && Number.isInteger(response.status) && response.status >= 0 && response.status <= 599) data.status = response.status;
+        if (response && Number.isInteger(response.readyState) && response.readyState >= 0 && response.readyState <= 4) data.ready_state = response.readyState;
+        if (response && Number.isSafeInteger(response.loaded) && response.loaded >= 0) data.loaded_bytes = response.loaded;
+        const requestId = response && typeof response.responseHeaders === 'string' ? response.responseHeaders.match(/^x-request-id:\s*([a-f0-9]{32})\s*$/im) : null;
+        if (requestId) data.request_id = requestId[1];
+        return data;
+      };
+      const finish = (callback, response, error) => {
+        const meta = metadata(response);
+        if (responseType === 'text' && response && typeof response.responseText === 'string') meta.response_bytes = new TextEncoder().encode(response.responseText).length;
+        else if (responseType === 'blob' && response && response.response && Number.isSafeInteger(response.response.size) && response.response.size >= 0) meta.response_bytes = response.response.size;
+        record('request_callback', operation, { callback, ...meta, duplicate_callback: settled, ...(error ? errorDetails(error) : {}) });
+        if (settled) return;
+        settled = true;
+        record('request_settled', operation, { callback, ...meta });
+        resolve({ callback, status: meta.status || 0, text: responseType === 'text' && response && typeof response.responseText === 'string' ? response.responseText : '', blob: responseType === 'blob' && response ? response.response : null });
+      };
+      record('request_start', operation, origin ? { server_origin: origin } : {});
+      try { GM_xmlhttpRequest({
         method: 'POST',
         url,
         headers,
         data: JSON.stringify(payload),
         timeout: PUSH_TIMEOUT_MS,
-        onload: (response) => {
-          resolve({ status: response.status, text: response.responseText || '' });
+        responseType,
+        onreadystatechange: response => {
+          if (response.readyState === previousState) return;
+          previousState = response.readyState;
+          record('request_callback', operation, { callback: 'ready_state', ...metadata(response) });
         },
-        onerror: () => resolve({ status: 0, text: '' }),
-        ontimeout: () => resolve({ status: -1, text: '' })
-      });
+        onprogress: response => record('request_callback', operation, { callback: 'progress', ...metadata(response) }),
+        onload: response => finish('load', response),
+        onerror: response => finish('error', response),
+        ontimeout: response => finish('timeout', response),
+        onabort: response => finish('abort', response)
+      }); } catch (error) { finish('throw', null, error); }
     });
   }
 
@@ -217,28 +403,29 @@
     return '';
   }
 
-  async function pushCookies(server, password, cookieString) {
+  async function pushCookies(server, password, cookieString, operation) {
     const response = await postJSON(
       server + '/api/accounts/probe-import',
       password,
-      { cookies: cookieString }
+      { cookies: cookieString },
+      operation
     );
+    if (response.callback !== 'load' || response.status === 0) {
+      return { kind: 'unconfirmed', reason: response.callback === 'timeout' ? 'timeout' : response.callback === 'abort' ? 'aborted' : 'network_error' };
+    }
     if (response.status === 200) {
       let data = null;
       try {
         data = JSON.parse(response.text);
       } catch (error) {
-        /* ignore */
+        return { kind: 'unconfirmed', reason: 'invalid_json' };
       }
-      const accounts = (data && Array.isArray(data.accounts)) ? data.accounts : [];
-      const count = data && typeof data.imported_count === 'number'
-        ? data.imported_count
-        : accounts.length;
-      return { kind: 'ok', count, accounts };
+      if (!data || !Number.isSafeInteger(data.imported_count) || data.imported_count < 0 || data.imported_count > 10000 || !Array.isArray(data.accounts) || data.accounts.length !== data.imported_count || data.accounts.some(account => !account || typeof account.id !== 'string' || typeof account.name !== 'string' || (account.email != null && typeof account.email !== 'string'))) {
+        return { kind: 'unconfirmed', reason: 'invalid_response' };
+      }
+      return { kind: 'ok', count: data.imported_count, accounts: data.accounts };
     }
     if (response.status === 401) return { kind: 'auth' };
-    if (response.status === 0) return { kind: 'net' };
-    if (response.status === -1) return { kind: 'timeout' };
     return {
       kind: 'http',
       status: response.status,
@@ -311,6 +498,11 @@
     passwordLabel.appendChild(passwordInput);
     const pushBtn = el('button', 'big push', '抓取并推送');
     pushBtn.type = 'button';
+    const exportBtn = el('button', 'headBtn export', '导出诊断包');
+    exportBtn.type = 'button';
+    exportBtn.style.background = '#374151';
+    const diagnosticsHint = el('div', 'hint', '遇到推送异常时，从这里导出可合并浏览器与服务端记录；不包含 Cookie 值或管理密码。');
+    const exportInfo = el('div', 'status export-info');
     const status = el('div', 'status', '就绪：请先确认已在 aistudio.google.com 登录。');
     const hint = el('div', 'hint');
     body.appendChild(serverLabel);
@@ -318,6 +510,9 @@
     body.appendChild(pushBtn);
     body.appendChild(status);
     body.appendChild(hint);
+    body.appendChild(exportBtn);
+    body.appendChild(diagnosticsHint);
+    body.appendChild(exportInfo);
     panel.appendChild(body);
     wrap.appendChild(panel);
 
@@ -337,6 +532,9 @@
       server: serverInput,
       password: passwordInput,
       push: pushBtn,
+      export: exportBtn,
+      diagnosticsHint,
+      exportInfo,
       status,
       hint
     };
@@ -436,7 +634,57 @@
 
   // ---------- 交互 ----------
 
+  function download(blob, filename) {
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  async function onExport() {
+    if (els.export.disabled) return;
+    els.export.disabled = true;
+    const operation = identifier();
+    const filename = 'aistudio-diagnostics-' + new Date().toISOString().replace(/:/g, '-') + '-' + operation;
+    let reason = 'local_export';
+    record('export_start', operation);
+    els.exportInfo.textContent = '正在生成诊断包…';
+    try {
+      const response = await postJSON(normalizeServer(els.server.value) + '/api/diagnostics/export', els.password.value || '', { client_report: browserReport() }, operation, 'blob');
+      reason = response.callback === 'timeout' ? 'timeout' : response.callback === 'abort' ? 'aborted' : response.callback !== 'load' ? 'network_error' : 'archive_rejected';
+      if (response.callback === 'load' && response.status === 200 && response.blob && typeof response.blob.slice === 'function') {
+        const magic = new Uint8Array(await response.blob.slice(0, 2).arrayBuffer());
+        if (magic[0] === 0x1f && magic[1] === 0x8b) {
+          download(response.blob, filename + '.tar.gz');
+          record('export_result', operation, { outcome: 'combined' });
+          els.exportInfo.textContent = '完整诊断包已生成，包含浏览器摘要与服务端记录；服务端部分可能包含对话原文，请只发给信任的人。';
+          return;
+        }
+      }
+    } catch (error) {
+      reason = 'download_failed';
+      record('unexpected_error', operation, { ...errorDetails(error), reason: 'unexpected_error' });
+    } finally {
+      els.export.disabled = false;
+    }
+    record('export_result', operation, { outcome: 'local_only', reason });
+    try {
+      const report = { schema_version: 1, kind: 'browser_only', missing: ['server_diagnostics'], client_report: browserReport() };
+      download(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }), filename + '-browser-only.json');
+      els.exportInfo.textContent = '仅本地诊断记录已导出，缺少服务端记录；请检查连接与管理密码，服务恢复后可再次导出完整包。';
+    } catch (error) {
+      record('unexpected_error', operation, { ...errorDetails(error), reason: 'download_failed' });
+      els.exportInfo.textContent = '浏览器下载失败，尚未取得诊断文件；请保留页面并检查脚本管理器。';
+    }
+  }
+
   async function onPush() {
+    if (els.push.disabled) return;
+    const operation = identifier();
     const server = normalizeServer(els.server.value);
     const password = els.password.value || '';
     els.server.value = server;
@@ -445,10 +693,13 @@
 
     els.push.disabled = true;
     try {
+      record('cookie_start', operation);
       setStatus('正在抓取 Cookie…');
       const collected = await collectCookies();
       const total = collected.cookies.size;
+      record('cookie_end', operation, { cookie_count: total, gm_supported: collected.gmSupported, gm_failed: collected.gmFailed, enhanced: collected.enhanced, missing_cookie_names: CORE_COOKIE_NAMES.filter(name => !collected.cookies.has(name)) });
       if (total === 0) {
+        record('result', operation, { outcome: 'no_cookies' });
         setStatus('本页没有读到任何 Cookie：请先确认已在 aistudio.google.com 登录。', 'err');
         return;
       }
@@ -461,36 +712,36 @@
         '，正在推送并探活导入…'
       );
 
-      const result = await pushCookies(server, password, toCookieString(collected.cookies));
+      const result = await pushCookies(server, password, toCookieString(collected.cookies), operation);
+      record('result', operation, { outcome: result.kind, ...(result.reason ? { reason: result.reason } : {}), ...(result.status ? { status: result.status } : {}), ...(typeof result.count === 'number' ? { imported_count: result.count } : {}) });
       if (result.kind === 'ok') {
         const names = result.accounts
           .map((account) => account.email || account.name)
           .filter(Boolean)
           .join('、');
         setStatus(
-          '导入成功：共 ' + result.count + ' 个账号' + (names ? '（' + names + '）' : ''),
+          (result.count ? '导入成功：共 ' : '导入完成：共 ') + result.count + ' 个账号' + (names ? '（' + names + '）' : ''),
           'ok'
         );
       } else if (result.kind === 'auth') {
         setStatus('服务开启了管理鉴权：请填写正确的管理密码后重试。', 'err');
-      } else if (result.kind === 'net') {
+      } else if (result.kind === 'unconfirmed') {
         setStatus(
-          '无法连接服务：请检查地址是否正确、服务是否已启动。手机本机访问用 127.0.0.1，' +
-          '电脑访问手机上的服务请填手机的局域网 IP。',
+          '未能确认导入结果，可能已导入：' + (result.reason === 'timeout' ? '等待回执超时。' : result.reason === 'aborted' ? '请求被取消。' : result.reason === 'invalid_json' || result.reason === 'invalid_response' ? '收到的回执格式不正确。' : '连接或接收回执时出错。') + '请先查看账号列表或导出诊断包，避免重复导入。',
           'err'
         );
-      } else if (result.kind === 'timeout') {
-        setStatus('推送超时：探活耗时过长，请在服务端日志确认结果后重试。', 'err');
       } else {
         setStatus(
-          '推送未成功（HTTP ' + result.status + '）' +
-          (result.message ? '：' + result.message : ''),
+          '服务返回错误（HTTP ' + result.status + '）' +
+          (result.message ? '：' + result.message : '') + '。请核对账号列表或导出诊断包确认是否部分导入。',
           'err'
         );
       }
     } catch (error) {
-      setStatus('推送失败：' + (error && error.message ? error.message : String(error)), 'err');
+      record('unexpected_error', operation, { ...errorDetails(error), reason: 'unexpected_error' });
+      setStatus('操作出现异常，尚未确认导入结果；请查看账号列表或导出诊断包。', 'err');
     } finally {
+      els.diagnosticsHint.textContent = '本次操作编号：' + operation + (storageError ? '；本地保存存在错误，请在关闭页面前导出。' : '。诊断记录保留最近 7 天，最多 1 MiB。');
       els.push.disabled = false;
     }
   }
@@ -498,6 +749,7 @@
   // ---------- 初始化 ----------
 
   try {
+    sessionId = identifier();
     host = document.createElement('div');
     host.id = HOST_ID;
     host.style.cssText = 'position: fixed; z-index: 2147483647;';
@@ -506,6 +758,8 @@
     els = buildPanel();
 
     els.push.addEventListener('click', onPush);
+    els.export.addEventListener('click', onExport);
+    window.addEventListener('pagehide', () => { if (downloadUrl) URL.revokeObjectURL(downloadUrl); });
     els.headBtn.addEventListener('click', () => applyOpen(false));
     els.bubble.addEventListener('click', () => applyOpen(true));
     els.server.addEventListener('change', () => {
@@ -525,6 +779,7 @@
     applyPosition(savedPos);
     makeDraggable(els.head);
     applyOpen(getCfg(CFG_OPEN, true) !== false);
+    record('script_start', sessionId);
   } catch (error) {
     try {
       console.error('[aistudio-cookie] 初始化失败:', error);
@@ -533,7 +788,7 @@
     }
     try {
       alert(
-        '[AI Studio Cookie 抓取 v0.1.2] 初始化失败：' +
+        '[AI Studio Cookie 抓取 v' + SCRIPT_VERSION + '] 初始化失败：' +
         (error && error.message ? error.message : String(error))
       );
     } catch (ignore) {
