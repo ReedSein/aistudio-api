@@ -314,6 +314,7 @@ async def test_account_service_activate_account_warms_up_browser():
 async def test_capture_service_single_pass_full_payload():
     """Verify capture service builds full modified_body with system instruction and tools in one pass."""
     mock_session = MagicMock(spec=BrowserSession)
+    mock_session.ensure_ready = AsyncMock()
     mock_session.capture_template = AsyncMock(
         return_value={
             "url": "https://example.com/generate",

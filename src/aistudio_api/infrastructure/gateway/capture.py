@@ -56,6 +56,8 @@ class RequestCaptureService:
         sanitize_plain_text: bool = True,
         force_refresh: bool = False,
     ) -> CapturedRequest | None:
+        # 先经就绪门等待：预热/切号完成前不能捕获模板，否则占位模板会在解码时越界（冷启动竞态）
+        await self._session.ensure_ready()
         if force_refresh:
             self._templates.pop(model, None)
         template = await self._ensure_template(model)
