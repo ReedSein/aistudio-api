@@ -16,13 +16,31 @@
 完整安装命令：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
+bash -c '
+set -eu
+test -w "$TMPDIR"
+install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
+cleanup() { rm -rf -- "$install_tmp"; }
+trap cleanup EXIT
+"$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+bash "$install_tmp/install-termux.sh" "$@"
+' --
 ```
 
-指定其他父目录时，直接选择下面这一行安装命令：
+指定其他父目录时，直接复制下面的安装命令：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+bash -c '
+set -eu
+test -w "$TMPDIR"
+install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
+cleanup() { rm -rf -- "$install_tmp"; }
+trap cleanup EXIT
+"$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+bash "$install_tmp/install-termux.sh" "$@"
+' -- --dir "$HOME/projects"
 ```
 
 安装器按需安装 Python、Git、uv、curl、ca-certificates、proot-distro、gum，以及构建 CFFI、PyYAML 所需的 clang、pkg-config；创建或复用 `aistudio-api-termux` 浏览器容器（已登记的旧安装继续沿用其原有容器），按锁文件同步依赖，并安装 `aistudio` 命令。已有安装可再次运行相同命令续做；它不会自动覆盖源码修改，也不会替换其他仓库。
@@ -44,7 +62,16 @@ aistudio
 需要新建开发安装时，从 `master` 获取安装器并显式带上 `--dev`：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/ReedSein/aistudio-api-termux/master/scripts/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dev --dir "$HOME/projects"
+bash -c '
+set -eu
+test -w "$TMPDIR"
+install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
+cleanup() { rm -rf -- "$install_tmp"; }
+trap cleanup EXIT
+"$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
+  https://raw.githubusercontent.com/ReedSein/aistudio-api-termux/master/scripts/install-termux.sh "$install_tmp/install-termux.sh"
+bash "$install_tmp/install-termux.sh" "$@"
+' -- --dev --dir "$HOME/projects"
 ```
 
 只有目录尚不存在时才克隆 `master`。菜单会显示“本地开发”；主动更新跟随本 fork 的 `master`，存在源码修改、本地领先提交或分叉时保留本地工作并停止更新。在其他开发分支中自行用 Git 管理源码，启动和停止不受影响。
@@ -93,6 +120,20 @@ aistudio --register --port 11451
 配置和状态目录遵循 `XDG_CONFIG_HOME`、`XDG_STATE_HOME`。首次接入复制当前配置，后续不会覆盖；Web 控制台编辑的是这个独立配置。静默启动仍正常保存账号和统计等应用数据。
 
 ## 更新规则与失败恢复
+
+### 首次安装失败后重试
+
+重新执行上面的安装命令，使用同一父目录。下载入口使用 Termux 自带的 `apt-helper`，不要求 curl 已经能够启动；下载使用独立临时目录，失败文件不会作为安装器执行。入口遵循 APT 现有的网络设置。
+
+- 系统包：检查未完成的包配置和工具的实际可执行性，通过 APT 修复、完整升级；仍不能运行的具体包才重装。操作前会列出影响并要求确认，取消或非交互执行时停止。
+- 源码：复用完整检出；核实为空目录或属于本仓库的纯 Git 下载半成品时重新下载。完整源码就绪后才调用项目安装逻辑；本地源码修改和无法确认来源的目录会停止并说明。
+- Python 环境：先按锁文件同步；本项目的环境损坏时重建 `.venv`。符号链接或无法识别的目录不会作为运行环境删除。
+- 浏览器：指定版本完整且能运行时复用，损坏的对应缓存才重新下载。无效归档不会成为有效浏览器；下载传输最多三次尝试。
+- Ubuntu：可登录的本项目环境补齐依赖；安装器会记录尚未完成的容器创建，后续可以据此重建首装坏容器。旧残留无法确认归属时显示容器名并停止。
+
+系统包与共享下载缓存由包管理器管理。系统升级可能影响其他 Termux 工具，不能通过回退项目代码撤销；清理的首装半成品通过原下载来源重新生成。
+
+### 已有安装的更新
 
 产品更新来源固定为此 fork，原作者的改动由维护者评估、测试后再吸收。菜单不会自动同步原作者分支。仓库已改名为 `aistudio-api-termux`：安装器与更新器继续识别旧地址，旧命名的安装重跑新版安装脚本即可接续，原源码目录、浏览器容器及 `aistudio` 命令不变；新安装使用 `aistudio-api-termux` 源码目录与同名浏览器容器，不复用原作者遗留环境。
 

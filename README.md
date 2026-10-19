@@ -10,19 +10,41 @@
 
 默认安装到 `~/aistudio-api-termux`，与当前所在目录无关：
 
+请在交互式 Termux 窗口执行。入口使用 Termux 自带的 APT 下载工具，curl 缺库时也能取得安装器。需要修复或升级系统软件时，会先显示影响并询问；这可能更新其他 Termux 项目共用的工具。
+
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
+bash -c '
+set -eu
+test -w "$TMPDIR"
+install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
+cleanup() { rm -rf -- "$install_tmp"; }
+trap cleanup EXIT
+"$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+bash "$install_tmp/install-termux.sh" "$@"
+' --
 ```
 
 指定父目录，例如安装到 `~/projects/aistudio-api-termux`：
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+bash -c '
+set -eu
+test -w "$TMPDIR"
+install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
+cleanup() { rm -rf -- "$install_tmp"; }
+trap cleanup EXIT
+"$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+bash "$install_tmp/install-termux.sh" "$@"
+' -- --dir "$HOME/projects"
 ```
 
 安装和更新只使用维护者选定的最新正式发布，日常开发提交不会提供给使用者。正式版本使用 `termux-vX.Y.Z` 标签；首次正式发布前安装链接不可用，获取发布失败时会停止。
 
 再次执行相同安装命令可以续做失败的安装，或在原位置重装并复用保留的数据。已有无关目录、源码修改或其他仓库会明确报错并停止。仓库更名为 aistudio-api-termux 后，旧地址仍被识别；旧命名的安装重跑新版安装脚本即可接续，原安装目录与浏览器容器继续沿用。
+
+首次安装被中断时，重跑同一命令即可接续：可用的源码和浏览器复用，核实归属的下载半成品及损坏的项目运行环境定向重建。安装器下载、版本查询、源码获取和浏览器下载最多尝试三次；持续失败时显示实际错误。
 
 ## 本机开发与测试
 

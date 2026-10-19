@@ -10,19 +10,41 @@ Targets Android ARM64 Termux with an interactive Chinese management menu, one-co
 
 The default location is `~/aistudio-api-termux`, independent of the current directory:
 
+Run in an interactive Termux terminal. The bootstrap uses Termux's bundled APT downloader, so a broken curl does not prevent fetching the installer. Package repair or upgrades require confirmation and may update tools shared with other Termux projects.
+
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh"
+bash -c '
+set -eu
+test -w "$TMPDIR"
+install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
+cleanup() { rm -rf -- "$install_tmp"; }
+trap cleanup EXIT
+"$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+bash "$install_tmp/install-termux.sh" "$@"
+' --
 ```
 
 Choose a different parent directory, for example `~/projects/aistudio-api-termux`:
 
 ```bash
-pkg update -y && pkg install -y curl && curl -fsSL https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh -o "$TMPDIR/aistudio-api-install.sh" && bash "$TMPDIR/aistudio-api-install.sh" --dir "$HOME/projects"
+bash -c '
+set -eu
+test -w "$TMPDIR"
+install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
+cleanup() { rm -rf -- "$install_tmp"; }
+trap cleanup EXIT
+"$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+bash "$install_tmp/install-termux.sh" "$@"
+' -- --dir "$HOME/projects"
 ```
 
 Public installs and updates use the maintainer-selected latest release, tagged `termux-vX.Y.Z`. Development commits do not change the public version. The install link becomes available after the first formal release; release lookup failures stop installation.
 
 Rerun the same command to resume installation or reinstall at the same location using retained data. Unrelated directories, foreign repositories, and local source edits are preserved and reported. After the repository rename to aistudio-api-termux the previous address is still recognised; rerunning the new installer continues an older installation and keeps its existing directory and browser container.
+
+After an interrupted first install, rerun the same command. Usable source and browser files are reused; identified incomplete downloads and broken project environments are rebuilt. Installer downloads, release lookups, source transfers, and browser downloads make at most three attempts and report the original error on persistent failure.
 
 ## Local development and testing
 

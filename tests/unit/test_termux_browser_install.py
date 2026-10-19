@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -15,6 +16,148 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from unpack_browser import unpack
+
+
+@pytest.fixture
+def browser_install(tmp_path):
+    root = tmp_path / "first install"
+    source = Path(__file__).resolve().parents[2] / "scripts"
+    shutil.copytree(
+        source, root / "scripts", ignore=shutil.ignore_patterns("__pycache__")
+    )
+    (root / "scripts/cloakbrowser.version").write_text("9.8.7.6.5\n")
+    archive = tmp_path / "browser.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        for name in ("chrome", "icudtl.dat"):
+            content = b"fixture"
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            bundle.addfile(info, io.BytesIO(content))
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    scripts = {
+        "proot-distro": """import os, sys
+from pathlib import Path
+p = Path(os.environ["TEST_ROOT"])
+args = sys.argv[1:]
+state, broken = p / "container", p / "broken-container"
+if args[0] == "list":
+    if state.exists(): print("aistudio-api-termux")
+elif args[0] == "install":
+    state.touch()
+    if os.getenv("TEST_CONTAINER_FAIL") and not (p / "failed-once").exists():
+        (p / "failed-once").touch()
+        broken.touch()
+        sys.exit(1)
+elif args[0] == "remove":
+    with (p / "removed").open("a") as log: log.write(args[1] + "\\n")
+    state.unlink()
+    broken.unlink(missing_ok=True)
+elif args[0] == "login":
+    if broken.exists(): sys.exit(1)
+    if "--version" in args:
+        chrome = Path(os.environ["TEST_PROJECT"]) / ".cloakbrowser/chromium-9.8.7.6.5/chrome"
+        if not chrome.exists() or chrome.read_bytes() == b"broken": sys.exit(1)
+        print("Chromium 9.8.7.6")
+""",
+        "curl": """import os, sys
+from pathlib import Path
+p = Path(os.environ["TEST_ROOT"])
+with (p / "downloads").open("a") as log: log.write("download\\n")
+Path(sys.argv[sys.argv.index("-o") + 1]).write_bytes((p / "browser.tar.gz").read_bytes())
+""",
+        "uv": """import os, sys
+os.execv(sys.executable, [sys.executable, *sys.argv[sys.argv.index("python") + 1:]])
+""",
+    }
+    for name, body in scripts.items():
+        tool = binary / name
+        tool.write_text(f"#!{sys.executable}\n{body}")
+        tool.chmod(0o755)
+    (tmp_path / "container").touch()
+    env = {
+        name: os.environ[name]
+        for name in ("PATH", "TMPDIR", "PREFIX", "LD_PRELOAD", "LD_LIBRARY_PATH")
+        if name in os.environ
+    }
+    env.update(
+        PATH=f"{binary}:{os.environ['PATH']}",
+        TEST_ROOT=str(tmp_path),
+        TEST_PROJECT=str(root),
+    )
+    return root, tmp_path, env
+
+
+def prepare_browser(root, env):
+    return subprocess.run(
+        ["bash", str(root / "scripts/setup-browser.sh")],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+
+def test_first_install_replaces_a_partial_browser_then_reuses_the_complete_cache(
+    browser_install,
+):
+    root, state, env = browser_install
+    cache = root / ".cloakbrowser/chromium-9.8.7.6.5"
+    cache.mkdir(parents=True)
+    (cache / "chrome").write_bytes(b"broken")
+    (cache / "chrome").chmod(0o755)
+    for _ in range(2):
+        result = prepare_browser(root, env)
+        assert result.returncode == 0, result.stderr
+    assert (cache / "icudtl.dat").is_file()
+    assert (state / "downloads").read_text().splitlines() == ["download"]
+
+
+def test_first_install_resumes_its_own_interrupted_container(browser_install):
+    root, state, env = browser_install
+    (state / "container").unlink()
+    env["TEST_CONTAINER_FAIL"] = "1"
+    first = prepare_browser(root, env)
+    assert first.returncode != 0
+    marker = root / ".cloakbrowser/.proot-installing"
+    assert marker.is_file()
+    second = prepare_browser(root, env)
+    assert second.returncode == 0, second.stderr
+    assert (state / "removed").read_text().splitlines() == ["aistudio-api-termux"]
+    assert not marker.exists()
+
+
+def test_broken_container_with_unknown_owner_is_preserved(browser_install):
+    root, state, env = browser_install
+    (state / "broken-container").touch()
+    result = prepare_browser(root, env)
+    assert result.returncode != 0
+    assert not (state / "removed").exists()
+
+
+def test_unknown_browser_cache_is_preserved(browser_install):
+    root, state, env = browser_install
+    cache = root / ".cloakbrowser/chromium-9.8.7.6.5"
+    cache.mkdir(parents=True)
+    sentinel = cache / "keep.txt"
+    sentinel.touch()
+    result = prepare_browser(root, env)
+    assert result.returncode != 0
+    assert sentinel.exists()
+    assert not (state / "downloads").exists()
+
+
+def test_browser_cache_symlink_is_not_followed(browser_install):
+    root, state, env = browser_install
+    external = state / "external"
+    external.mkdir()
+    sentinel = external / "keep.txt"
+    sentinel.touch()
+    (root / ".cloakbrowser").symlink_to(external, target_is_directory=True)
+    result = prepare_browser(root, env)
+    assert result.returncode != 0
+    assert sentinel.exists()
 
 
 @pytest.mark.parametrize("prefix", ["", "chromium-build/"])

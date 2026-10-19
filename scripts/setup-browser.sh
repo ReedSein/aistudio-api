@@ -45,7 +45,7 @@ done
 [[ "${CHROMIUM_VERSION}" =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "invalid browser version" >&2; exit 2; }
 [[ "${PROOT_NAME}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo "invalid container name" >&2; exit 2; }
 
-PROJECT_ROOT="$(cd "${PROJECT_ROOT}" && pwd)"
+PROJECT_ROOT="$(cd "${PROJECT_ROOT}" && pwd -P)"
 CLOAK_ROOT="${PROJECT_ROOT}/.cloakbrowser"
 CHROME_DIR_HOST="${CLOAK_ROOT}/chromium-${CHROMIUM_VERSION}"
 
@@ -61,6 +61,16 @@ is_termux() {
 setup_termux() {
     log "Configuring Termux CloakBrowser environment (proot-distro)..."
 
+    [[ ! -L "${CLOAK_ROOT}" ]] || { log 'Browser cache root is a symbolic link; stopped.'; exit 1; }
+    mkdir -p "${CLOAK_ROOT}"
+    local owner_file="${CLOAK_ROOT}/.proot-installing"
+    local owner="${PROOT_NAME}"$'\n'"${PROOT_IMAGE}"
+    [[ ! -L "${owner_file}" ]] || { log 'Container ownership record is a symbolic link.'; exit 1; }
+    if [[ -e "${owner_file}" && "$(cat "${owner_file}")" != "${owner}" ]]; then
+        log "A different unfinished container is recorded in ${owner_file}; stopped."
+        exit 1
+    fi
+
     if ! command -v proot-distro >/dev/null 2>&1; then
         if command -v pkg >/dev/null 2>&1; then
             log "Installing proot-distro on Termux host..."
@@ -74,12 +84,22 @@ setup_termux() {
     # 1. proot container
     CONTAINERS="$(proot-distro list --quiet)"
     if grep -Fxq -- "${PROOT_NAME}" <<< "${CONTAINERS}"; then
-        log "Container '${PROOT_NAME}' already exists; skipping container creation."
+        if proot-distro login "${PROOT_NAME}" -- /bin/true; then
+            log "Container '${PROOT_NAME}' can log in; reusing it."
+        elif [[ -f "${owner_file}" && ${SKIP_PROOT} -eq 0 ]]; then
+            log "Rebuilding this installation's incomplete container: ${PROOT_NAME}"
+            proot-distro remove "${PROOT_NAME}"
+            proot-distro install "${PROOT_IMAGE}" --name "${PROOT_NAME}"
+        else
+            log "Container '${PROOT_NAME}' cannot log in and cannot be identified as this first install; stopped."
+            exit 1
+        fi
     elif [[ ${SKIP_PROOT} -eq 1 ]]; then
         log "--skip-proot-install set but container missing; aborting."
         exit 1
     else
         log "Installing proot container '${PROOT_NAME}' from ${PROOT_IMAGE}..."
+        printf '%s\n' "${owner}" > "${owner_file}"
         proot-distro install "${PROOT_IMAGE}" --name "${PROOT_NAME}"
     fi
 
@@ -89,6 +109,14 @@ setup_termux() {
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
         export TZ=UTC
+        audit="$(dpkg --audit)"
+        if [[ -n "${audit}" ]]; then
+            if ! dpkg --configure -a; then
+                apt-get update
+                apt-get --fix-broken install -y
+                dpkg --configure -a
+            fi
+        fi
         packages=( \
             ca-certificates curl \
             libnss3 libnspr4 libgbm1 libasound2t64 \
@@ -116,17 +144,26 @@ setup_termux() {
     ARCHIVE_NAME="cloakbrowser-linux-arm64.tar.gz"
     DOWNLOAD_URL="https://github.com/CloakHQ/cloakbrowser/releases/download/chromium-v${CHROMIUM_VERSION}/${ARCHIVE_NAME}"
 
-    if [[ -x "${CHROME_DIR_HOST}/chrome" ]]; then
+    [[ ! -L "${CHROME_DIR_HOST}" ]] || { log 'Browser version directory is a symbolic link.'; exit 1; }
+    if [[ -x "${CHROME_DIR_HOST}/chrome" && -f "${CHROME_DIR_HOST}/icudtl.dat" ]] && CLOAKBROWSER_PROJECT_DIR="${PROJECT_ROOT}" AISTUDIO_PROOT_NAME="${PROOT_NAME}" bash "${SCRIPT_DIR}/cloakbrowser_termux/run-chrome.sh" --version; then
         log "CloakBrowser ${CHROMIUM_VERSION} already cached at ${CHROME_DIR_HOST}"
     elif [[ ${SKIP_BROWSER} -eq 1 ]]; then
         log "--skip-browser-download set but no chrome binary; aborting."
         exit 1
     else
+        if [[ -e "${CHROME_DIR_HOST}" ]]; then
+            if [[ ! -d "${CHROME_DIR_HOST}" ]] || { [[ ! -f "${CHROME_DIR_HOST}/chrome" && ! -f "${CHROME_DIR_HOST}/icudtl.dat" ]] && [[ -n "$(find "${CHROME_DIR_HOST}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; }; then
+                log "Unknown files in browser cache ${CHROME_DIR_HOST}; stopped."
+                exit 1
+            fi
+            log "Removing incomplete browser cache: ${CHROME_DIR_HOST}"
+            rm -rf -- "${CHROME_DIR_HOST}"
+        fi
         log "Downloading CloakBrowser ARM64 (~200MB)..."
         [[ -n "${TMPDIR:-}" && -w "${TMPDIR}" ]] || { log "TMPDIR must be writable."; exit 1; }
         TMP="$(mktemp -d "${TMPDIR%/}/aistudio-browser.XXXXXX")"
         trap 'rm -rf "${TMP}"' EXIT
-        curl --proto '=https' --tlsv1.2 -fSL --retry 3 -o "${TMP}/${ARCHIVE_NAME}" "${DOWNLOAD_URL}"
+        bash "${SCRIPT_DIR}/install-termux.sh" --download "${DOWNLOAD_URL}" "${TMP}/${ARCHIVE_NAME}"
         uv run --no-sync --no-python-downloads --project "${PROJECT_ROOT}" python \
             "${SCRIPT_DIR}/unpack_browser.py" "${TMP}/${ARCHIVE_NAME}" "${CHROME_DIR_HOST}"
         log "CloakBrowser extracted to ${CHROME_DIR_HOST}"
@@ -136,6 +173,7 @@ setup_termux() {
     # No second browser copy inside the container can become stale.
     CLOAKBROWSER_PROJECT_DIR="${PROJECT_ROOT}" AISTUDIO_PROOT_NAME="${PROOT_NAME}" \
         bash "${SCRIPT_DIR}/cloakbrowser_termux/run-chrome.sh" --version
+    [[ ! -f "${owner_file}" ]] || rm -- "${owner_file}"
 }
 
 # ==============================================================================
