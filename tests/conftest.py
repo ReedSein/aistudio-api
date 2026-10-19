@@ -73,6 +73,8 @@ def isolate_test_config(monkeypatch, _shared_test_env):
     accounts_dir = data_dir / "accounts"
 
     monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("AISTUDIO_LOG_DIR", str(data_dir / "diagnostic-logs"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(data_dir / "state"))
     monkeypatch.setenv("AISTUDIO_DATA_DIR", str(data_dir))
     monkeypatch.setenv("AISTUDIO_ACCOUNTS_DIR", str(accounts_dir))
     monkeypatch.setenv("AISTUDIO_STATS_FILE", str(stats_file))
