@@ -2,6 +2,149 @@
 # Install the maintained Termux fork; --dir is the parent of aistudio-api-termux/.
 set -euo pipefail
 
+# Kept in the standalone release asset so first-install failures need no Python.
+aistudio_redact_stream() {
+    sed -u -E \
+        -e 's#(https?://)[^/@[:space:]]+:[^/@[:space:]]+@#\1[REDACTED]@#gI' \
+        -e 's/([?&](key|api[_-]?key|token|access_token|auth|password)=)[^&[:space:]]+/\1[REDACTED]/gI' \
+        -e 's/("(authorization|proxy-authorization|cookies?|set-cookie|api[_-]?keys?|x-goog-api-key|x-api-key|access_token|refresh_token|token|password|secret|snapshot|botguard)"[[:space:]]*:[[:space:]]*).*/\1"[REDACTED]"/gI' \
+        -e 's/((authorization|proxy-authorization|cookie|set-cookie|x-goog-api-key|x-api-key|password|secret|AISTUDIO_WEB_PASSWORD|AISTUDIO_ADMIN_PASSWORD)[[:space:]]*[:=][[:space:]]*).*/\1[REDACTED]/gI' \
+        -e 's/(ya29\.[A-Za-z0-9_.-]+|SAPISIDHASH[[:space:]]+[A-Za-z0-9_ -]+)/[REDACTED]/g'
+}
+
+aistudio_log_directory() {
+    if [[ -n "${AISTUDIO_LOG_DIR:-}" ]]; then
+        printf '%s\n' "${AISTUDIO_LOG_DIR}"
+    elif [[ -n "${XDG_STATE_HOME:-}" ]]; then
+        printf '%s/aistudio-termux/logs\n' "${XDG_STATE_HOME}"
+    elif [[ -n "${HOME:-}" ]]; then
+        printf '%s/.local/state/aistudio-termux/logs\n' "${HOME}"
+    else
+        return 1
+    fi
+}
+
+aistudio_log_prune() {
+    local directory="$1" keep="$2" path modified size total=0 oldest oldest_time now days maximum
+    [[ -d "${directory}" && ! -L "${directory}" && -f "${directory}/.aistudio-diagnostics-v1" ]] || return 0
+    days="${AISTUDIO_LOG_RETENTION_DAYS:-7}"
+    maximum=536870912
+    if [[ -f "${directory}/.policy" && ! -L "${directory}/.policy" ]]; then
+        read -r days maximum < "${directory}/.policy" || return 1
+    fi
+    days="${AISTUDIO_LOG_RETENTION_DAYS:-${days}}"
+    if [[ -n "${AISTUDIO_LOG_MAX_MIB:-}" ]]; then
+        [[ "${AISTUDIO_LOG_MAX_MIB}" =~ ^[0-9]{1,5}$ ]] || return 1
+        maximum=$((10#${AISTUDIO_LOG_MAX_MIB} * 1048576))
+    fi
+    [[ "${days}" =~ ^[0-9]{1,4}$ && "${maximum}" =~ ^[0-9]{1,11}$ ]] || return 1
+    days=$((10#${days})) maximum=$((10#${maximum}))
+    [[ ${days} -ge 1 && ${days} -le 3650 && ${maximum} -ge 1 && ${maximum} -le 34359738368 ]] || return 1
+    now=$(date +%s)
+    for path in "${directory}"/events-*.jsonl "${directory}"/script-*.log "${directory}"/browser-*.log; do
+        [[ -f "${path}" && ! -L "${path}" ]] || continue
+        modified=$(stat -c %Y -- "${path}" 2>/dev/null) || continue
+        if [[ "${path}" != "${keep}" && $((now - modified)) -gt $((days * 86400)) ]]; then
+            size=$(stat -c %s -- "${path}" 2>/dev/null) || continue
+            rm -f -- "${path}"
+            printf '{"timestamp":"%s","reason":"shell_age","removed_files":1,"removed_bytes":%s}\n' "$(date -u +%FT%TZ)" "${size}" >> "${directory}/.retention.jsonl"
+        fi
+    done
+    while :; do
+        total=0 oldest="" oldest_time=${now}
+        for path in "${directory}"/events-*.jsonl "${directory}"/script-*.log "${directory}"/browser-*.log; do
+            [[ -f "${path}" && ! -L "${path}" ]] || continue
+            size=$(stat -c %s -- "${path}" 2>/dev/null) || continue
+            total=$((total + size))
+            modified=$(stat -c %Y -- "${path}" 2>/dev/null) || continue
+            if [[ "${path}" != "${keep}" && ${modified} -le ${oldest_time} ]]; then
+                oldest="${path}" oldest_time=${modified}
+            fi
+        done
+        [[ ${total} -gt ${maximum} && -n "${oldest}" ]] || break
+        size=$(stat -c %s -- "${oldest}" 2>/dev/null) || continue
+        rm -f -- "${oldest}"
+        printf '{"timestamp":"%s","reason":"shell_capacity","removed_files":1,"removed_bytes":%s}\n' "$(date -u +%FT%TZ)" "${size}" >> "${directory}/.retention.jsonl"
+    done
+}
+
+aistudio_log_sink() {
+    local directory="$1" label="$2" line file bytes=0
+    umask 077
+    file=$(mktemp "${directory}/script-${label}-XXXXXXXX.log") || return 1
+    aistudio_log_prune "${directory}" "${file}" || printf '[diagnostics] Log rotation failed; policy may not be enforced.\n' >&2
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        if ! printf '%(%Y-%m-%dT%H:%M:%S%z)T [%s] %s\n' -1 "${label}" "${line}" >> "${file}"; then
+            printf '[diagnostics] Script log write failed; evidence may be missing.\n' >&2
+            return 1
+        fi
+        bytes=$((bytes + ${#line} + 64))
+        if [[ ${bytes} -gt 1048576 ]]; then
+            file=$(mktemp "${directory}/script-${label}-XXXXXXXX.log") || return 1
+            aistudio_log_prune "${directory}" "${file}" || printf '[diagnostics] Log rotation failed; policy may not be enforced.\n' >&2
+            bytes=0
+        fi
+    done
+}
+
+aistudio_log_init() {
+    local label="$1" directory
+    [[ "${AISTUDIO_SHELL_CAPTURE_ACTIVE:-}" != 1 ]] || return 0
+    if ! directory=$(aistudio_log_directory); then
+        printf '[diagnostics] Cannot resolve a script log directory; evidence may be missing.\n' >&2
+        return 0
+    fi
+    if [[ "${directory}" == / || "${directory}" == "${HOME:-/}" || -L "${directory}" ]] || ! (umask 077; mkdir -p -- "${directory}"); then
+        printf '[diagnostics] Cannot create private script log directory; evidence may be missing.\n' >&2
+        return 0
+    fi
+    [[ ! -L "${directory}/.aistudio-diagnostics-v1" && ! -L "${directory}/.retention.jsonl" ]] || {
+        printf '[diagnostics] Unsafe diagnostic metadata path; script collection disabled.\n' >&2
+        return 0
+    }
+    if [[ -f "${directory}/.aistudio-diagnostics-v1" ]]; then
+        [[ "$(cat "${directory}/.aistudio-diagnostics-v1")" == 'aistudio-api diagnostics v1' ]] || {
+            printf '[diagnostics] Unrecognized log ownership marker; collection disabled.\n' >&2
+            return 0
+        }
+    else
+        if [[ -e "${directory}/.aistudio-diagnostics-v1" ]] || ! (
+            shopt -s nullglob dotglob
+            entries=("${directory}"/*)
+            [[ ${#entries[@]} -eq 0 ]]
+        ); then
+            printf '[diagnostics] Refusing an unowned nonempty log directory; collection disabled.\n' >&2
+            return 0
+        fi
+        (umask 077; set -C; printf 'aistudio-api diagnostics v1\n' > "${directory}/.aistudio-diagnostics-v1") || {
+            printf '[diagnostics] Cannot mark script log ownership; collection disabled.\n' >&2
+            return 0
+        }
+    fi
+    chmod 700 -- "${directory}" || {
+        printf '[diagnostics] Cannot protect script log directory; collection disabled.\n' >&2
+        return 0
+    }
+    export AISTUDIO_LOG_DIR="${directory}" AISTUDIO_SHELL_CAPTURE_ACTIVE=1
+    # tee mirrors unterminated prompts immediately; only the file branch is line based.
+    exec > >(tee >(aistudio_redact_stream | aistudio_log_sink "${directory}" "${label}-stdout"))
+    exec 2> >(tee >(aistudio_redact_stream | aistudio_log_sink "${directory}" "${label}-stderr") >&2)
+    printf '[diagnostics] Script logs: %s\n' "${directory}" >&2
+}
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    if [[ "${1:-}" != --diagnostics-functions ]]; then
+        aistudio_log_init "${2:-script}"
+    fi
+    return 0
+fi
+if [[ "${1:-}" == --diagnostics-exec ]]; then
+    shift
+    aistudio_log_init service
+    exec "$@"
+fi
+aistudio_log_init install-termux
+
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
 NETWORK_TMP=""
 CLONE_STAGE=""
@@ -12,9 +155,11 @@ CN_MIRRORS="${TERMUX_PREFIX}/etc/termux/mirrors/chinese_mainland"
 MIRROR_PROMPTED=false
 
 cleanup() {
+    local status=$?
+    printf '[install] finished exit=%s\n' "${status}" >&2
     [[ -z "${NETWORK_TMP}" ]] || rm -rf -- "${NETWORK_TMP}"
     [[ -z "${CLONE_STAGE}" ]] || rm -rf -- "${CLONE_STAGE}"
-    return 0
+    return "${status}"
 }
 trap cleanup EXIT
 

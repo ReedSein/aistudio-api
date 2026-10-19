@@ -7,6 +7,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 
+from termux_diagnostics import get_store
 from termux_release import ACCEPTED_ORIGINS, REPOSITORY, latest_release
 from termux_runtime import (
     Installation,
@@ -35,6 +36,7 @@ class Updater:
         self.repository = repository
 
     def git(self, *args: str) -> str:
+        started = time.monotonic()
         result = subprocess.run(
             ["git", *args],
             cwd=self.installation.root,
@@ -44,9 +46,21 @@ class Updater:
             check=False,
         )
         if result.returncode:
+            get_store().text(
+                "update_git_failure",
+                result.stderr,
+                operation=args[0],
+                returncode=result.returncode,
+            )
             raise ManagerError(
                 f"Git 操作失败 ({' '.join(args[:2])})：\n{result.stderr.strip()}"
             )
+        get_store().emit(
+            "update_git_operation",
+            operation=args[0],
+            returncode=result.returncode,
+            elapsed_ms=(time.monotonic() - started) * 1000,
+        )
         return result.stdout.strip()
 
     def verify_checkout(self) -> None:
@@ -88,6 +102,9 @@ class Updater:
         return UpdateStatus(current, available, int(counts[1]), version)
 
     def prepare(self) -> None:
+        get_store().emit(
+            "environment_prepare_start", proot_name=self.installation.proot_name
+        )
         command = ["bash", "scripts/setup-termux.sh"]
         if self.installation.development:
             command.append("--dev")
@@ -97,9 +114,11 @@ class Updater:
             command, cwd=self.installation.root, env=environment, check=False
         )
         if result.returncode:
+            get_store().emit("environment_prepare_failed", returncode=result.returncode)
             raise ManagerError(
                 f"准备运行环境失败：setup-termux.sh，退出码 {result.returncode}。"
             )
+        get_store().emit("environment_prepare_completed")
 
     def update(self) -> tuple[bool, subprocess.Popen[bytes] | None]:
         status = self.check()
@@ -117,6 +136,7 @@ class Updater:
         }
         journal_path = self.installation.state_dir / "last-update.json"
         write_object(journal_path, journal)
+        get_store().emit("update_stage", **journal)
         lockfile = self.installation.root / "uv.lock"
         if lockfile.is_file():
             atomic_write(
@@ -128,15 +148,18 @@ class Updater:
                 service.stop()
             journal["stage"] = "code"
             write_object(journal_path, journal)
+            get_store().emit("update_stage", **journal)
             # Git silently replaces ignored local files that the update adds;
             # stop instead so user data and local notes survive.
             self.git("merge", "--ff-only", "--no-overwrite-ignore", status.available)
             journal["stage"] = "environment"
             write_object(journal_path, journal)
+            get_store().emit("update_stage", **journal)
             self.prepare()
             self.installation.register()
             journal["stage"] = "restart"
             write_object(journal_path, journal)
+            get_store().emit("update_stage", **journal)
             process = (
                 service.start(running.mode, inherited_env=inherited_env)
                 if running
@@ -144,6 +167,7 @@ class Updater:
             )
             journal["stage"] = "complete"
             write_object(journal_path, journal)
+            get_store().emit("update_stage", **journal)
             return True, process
         except (ManagerError, OSError, subprocess.SubprocessError, KeyboardInterrupt):
             print(

@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from termux_diagnostics import export_logs, get_store, install_script_logging
 from termux_legacy import interactive_cleanup
 from termux_release import ReleaseCheck, check_release
 from termux_runtime import Installation, ManagerError, Service, operation_lock
@@ -21,6 +22,7 @@ CHOICES = (
     "停止服务",
     "检查更新",
     "一键更新",
+    "导出诊断包",
     "清理原版安装",
     "清理原版安装（清除资料）",
     "卸载（保留数据）",
@@ -85,6 +87,7 @@ def menu(installation: Installation) -> None:
             if selection.returncode:
                 return
             action = selection.stdout.strip()
+            get_store().emit("menu_action", action=action)
             if action == "退出":
                 return
             foreground = None
@@ -94,7 +97,9 @@ def menu(installation: Installation) -> None:
                     foreground = service.start("foreground")
                 elif action == "静默启动":
                     children.append(service.start("silent"))
-                    print("已在后台启动，不保存服务日志。")
+                    print(
+                        "已在后台启动；运行日志与对话原文持续保存，可用「导出诊断包」收集。"
+                    )
                     print(
                         f"控制台地址: http://localhost:{installation.port}/", flush=True
                     )
@@ -114,6 +119,8 @@ def menu(installation: Installation) -> None:
                         print(release_check_message(check_release(installation.root)))
                 elif action == "一键更新":
                     reload_menu, foreground = Updater(installation).update()
+                elif action == "导出诊断包":
+                    export_logs(installation.root)
                 elif action in ("清理原版安装", "清理原版安装（清除资料）"):
                     interactive_cleanup(
                         clear_data=action == "清理原版安装（清除资料）",
@@ -142,19 +149,28 @@ def menu(installation: Installation) -> None:
                     ],
                 )
         except KeyboardInterrupt:
+            get_store().emit("menu_action_cancelled")
             print("\n操作已取消。")
         except (ManagerError, OSError, subprocess.SubprocessError) as exc:
+            import traceback
+
+            get_store().text("menu_action_failed", traceback.format_exc())
             print(f"操作失败：{exc}", file=sys.stderr)
         input("按回车返回菜单…")
 
 
 def main() -> int:
+    install_script_logging("termux-manager")
     parser = argparse.ArgumentParser(description="aistudio-api Termux 管理菜单")
     setup = parser.add_mutually_exclusive_group()
     setup.add_argument(
         "--register", action="store_true", help="登记安装并创建 aistudio 命令"
     )
     setup.add_argument("--install", action="store_true", help="准备运行环境并登记安装")
+    setup.add_argument(
+        "--export-logs", action="store_true", help="导出含对话原文的诊断包"
+    )
+    parser.add_argument("--output", type=Path, help="诊断包保存位置，已有文件不覆盖")
     setup.add_argument(
         "--uninstall", action="store_true", help="卸载，默认保留配置和数据"
     )
@@ -182,13 +198,21 @@ def main() -> int:
     parser.add_argument("--project-root", type=Path, help="登记的项目路径")
     parser.add_argument("--port", type=int, help="服务端口，默认 11451")
     args = parser.parse_args()
+    if args.output and not args.export_logs:
+        parser.error("--output 必须与 --export-logs 一起使用")
     if args.clear_data and not args.uninstall:
         parser.error("--clear-data 必须与 --uninstall 一起使用")
     if args.development is not None and not (args.register or args.install):
         parser.error("--dev / --stable 只用于 --install 或 --register")
     try:
         installation = Installation.load(args.project_root, args.port, args.development)
-        if args.register or args.install:
+        os.environ.setdefault("AISTUDIO_LOG_DIR", str(installation.state_dir / "logs"))
+        os.environ["AISTUDIO_CONFIG_FILE"] = str(installation.config_file)
+        os.environ["AISTUDIO_PROOT_NAME"] = installation.proot_name
+        os.environ["AISTUDIO_PORT"] = str(installation.port)
+        if args.export_logs:
+            export_logs(installation.root, args.output)
+        elif args.register or args.install:
             with operation_lock(installation):
                 if args.install:
                     if Service(installation).running():
@@ -206,6 +230,9 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\n已退出菜单。")
     except (ManagerError, OSError, subprocess.SubprocessError) as exc:
+        import traceback
+
+        get_store().text("manager_failed", traceback.format_exc())
         print(f"操作失败：{exc}", file=sys.stderr)
         return 1
     return 0

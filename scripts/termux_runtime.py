@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from termux_diagnostics import get_store
+
 Mode = Literal["foreground", "silent"]
 ENTRY_MARKER = "# Managed by aistudio-api Termux manager."
 DEFAULT_PROOT_NAME = "aistudio-api-termux"
@@ -183,7 +185,16 @@ class Installation:
             ]
         )
         atomic_write(
-            entry, f'#!{shell}\n{ENTRY_MARKER}\nexec {command} "$@"\n'.encode(), 0o755
+            entry,
+            (
+                f"#!{shell}\n{ENTRY_MARKER}\n"
+                'if [ "${1:-}" = "--export-logs" ]; then\n'
+                "  shift\n"
+                f'  exec {shlex.quote(shutil.which("bash") or "bash")} {shlex.quote(str(self.root / "scripts/export-diagnostics.sh"))} "$@"\n'
+                "fi\n"
+                f'exec {command} "$@"\n'
+            ).encode(),
+            0o755,
         )
         write_object(
             record,
@@ -312,6 +323,9 @@ class Service:
     ) -> dict[str, str]:
         env = os.environ.copy() if inherited is None else inherited.copy()
         env["AISTUDIO_CONFIG_FILE"] = str(self.installation.config_file)
+        env["AISTUDIO_PORT"] = str(self.installation.port)
+        if not env.get("AISTUDIO_LOG_DIR"):
+            env["AISTUDIO_LOG_DIR"] = str(self.installation.state_dir / "logs")
         env["AISTUDIO_BROWSER_EXECUTABLE"] = str(
             self.installation.root / "scripts/cloakbrowser_termux/run-chrome.sh"
         )
@@ -363,6 +377,9 @@ class Service:
         *,
         inherited_env: dict[str, str] | None = None,
     ) -> subprocess.Popen[bytes]:
+        get_store().emit(
+            "service_start_requested", mode=mode, port=self.installation.port
+        )
         if self.running():
             raise ManagerError("服务已经运行，无需重复启动。")
         try:
@@ -387,6 +404,9 @@ class Service:
             raise ManagerError("缺少 uv 管理的项目环境，请重新运行安装脚本。")
         process = subprocess.Popen(
             [
+                shutil.which("bash") or "bash",
+                str(Path(__file__).with_name("install-termux.sh")),
+                "--diagnostics-exec",
                 str(interpreter),
                 "main.py",
                 "server",
@@ -422,6 +442,12 @@ class Service:
                         f"服务启动失败，退出码 {process.returncode}；可用普通启动查看日志。"
                     )
                 if self.healthy():
+                    get_store().emit(
+                        "service_ready",
+                        child_pid=process.pid,
+                        mode=mode,
+                        port=self.installation.port,
+                    )
                     return process
                 time.sleep(0.2)
             raise ManagerError("服务未在规定时间内就绪；可用普通启动查看日志。")
@@ -440,6 +466,7 @@ class Service:
             self.installation.process_file.unlink(missing_ok=True)
             return False
         try:
+            get_store().emit("service_stop_requested", child_pid=record.pid)
             os.killpg(record.pid, signal.SIGTERM)
         except ProcessLookupError:
             self.installation.process_file.unlink(missing_ok=True)
@@ -447,6 +474,7 @@ class Service:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if not owns_process(record, self.installation):
+                get_store().emit("service_stopped", child_pid=record.pid)
                 self.installation.process_file.unlink(missing_ok=True)
                 return True
             time.sleep(0.1)

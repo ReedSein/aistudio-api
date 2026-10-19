@@ -19,6 +19,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/install-termux.sh" --logging-only setup-browser
+trap 'status=$?; printf "[setup-browser] finished exit=%s\n" "$status" >&2' EXIT
 PROOT_NAME="${AISTUDIO_PROOT_NAME:-aistudio-api-termux}"
 PROOT_IMAGE="ubuntu:24.04"
 read -r CHROMIUM_VERSION < "${SCRIPT_DIR}/cloakbrowser.version"

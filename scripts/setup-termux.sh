@@ -3,6 +3,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+source "${PROJECT_ROOT}/scripts/install-termux.sh" --logging-only setup-termux
+trap 'status=$?; printf "[setup-termux] finished exit=%s\n" "$status" >&2' EXIT
 cd "${PROJECT_ROOT}"
 SYNC_ARGS=(--locked --no-python-downloads --no-dev)
 case "${1:-}" in

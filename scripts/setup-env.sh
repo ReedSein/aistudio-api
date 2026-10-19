@@ -14,6 +14,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/install-termux.sh" --logging-only setup-env
+trap 'status=$?; printf "[setup-env] finished exit=%s\n" "$status" >&2' EXIT
 
 log() { printf '[setup-env] %s\n' "$*" >&2; }
 

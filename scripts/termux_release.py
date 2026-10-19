@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from termux_diagnostics import get_store
 from termux_runtime import ManagerError
 
 REPOSITORY = "https://github.com/ReedSein/aistudio-api-termux.git"
@@ -35,6 +36,7 @@ class ReleaseLookupError(ManagerError):
 
 
 def latest_release(timeout: float = 30.0) -> str:
+    get_store().emit("release_lookup_start", timeout=timeout)
     try:
         with urllib.request.urlopen(LATEST_RELEASE, timeout=timeout) as response:
             url = response.geturl()
@@ -53,6 +55,7 @@ def latest_release(timeout: float = 30.0) -> str:
         tag = ""
     if not re.fullmatch(r"termux-v[0-9]+\.[0-9]+\.[0-9]+", tag):
         raise ManagerError("正式发布必须使用 termux-vX.Y.Z 标签。")
+    get_store().emit("release_lookup_completed", release=tag)
     return tag
 
 
@@ -89,7 +92,10 @@ def check_release(root: Path, timeout: float = 30.0) -> ReleaseCheck:
         latest = latest_release(timeout=timeout)
     except UnpublishedRelease:
         return ReleaseCheck("unpublished", current, None)
-    except ManagerError:
+    except ManagerError as exc:
+        get_store().text(
+            "release_lookup_failed", str(exc), error_type=type(exc).__name__
+        )
         return ReleaseCheck("unreachable", current, None)
     if current is None:
         return ReleaseCheck("unknown", None, latest)

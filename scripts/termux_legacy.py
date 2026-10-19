@@ -11,6 +11,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from termux_diagnostics import get_store, install_script_logging
 from termux_runtime import LEGACY_PROOT_NAME, Installation, ManagerError, operation_lock
 
 AUTHOR_ORIGINS = (
@@ -38,13 +39,19 @@ def _load_registered() -> Installation | None:
 
 
 def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    result = subprocess.run(
         ["git", "-C", str(root), *args],
         text=True,
         capture_output=True,
         timeout=60,
         check=False,
     )
+    get_store().emit(
+        "legacy_git_operation", operation=args[0], returncode=result.returncode
+    )
+    if result.returncode:
+        get_store().text("legacy_git_error", result.stderr)
+    return result
 
 
 def _is_author_origin(url: str) -> bool:
@@ -101,18 +108,34 @@ def _installed_containers() -> list[str] | None:
         check=False,
     )
     if result.returncode:
+        get_store().text(
+            "legacy_container_probe_error", result.stderr, returncode=result.returncode
+        )
         return None
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def _remove_container(name: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    result = subprocess.run(
         ["proot-distro", "remove", name],
         text=True,
         capture_output=True,
         timeout=300,
         check=False,
     )
+    get_store().text(
+        "legacy_container_output",
+        result.stdout,
+        channel="stdout",
+        returncode=result.returncode,
+    )
+    get_store().text(
+        "legacy_container_output",
+        result.stderr,
+        channel="stderr",
+        returncode=result.returncode,
+    )
+    return result
 
 
 def _parent_chain_has_symlink(root: Path, path: Path) -> bool:
@@ -230,6 +253,7 @@ class LegacyCleanup:
         )
 
     def run(self) -> bool:
+        get_store().emit("legacy_cleanup_start", clear_data=self.clear_data)
         root = self._select_root()
         if root is None:
             print("已取消清理。")
@@ -261,6 +285,7 @@ class LegacyCleanup:
             input(f"输入 {CONFIRM_WORD} 确认清理，其他输入取消：").strip()
             != CONFIRM_WORD
         ):
+            get_store().emit("legacy_cleanup_cancelled")
             print("已取消清理。")
             return False
         return self._execute(survey, container)
@@ -367,11 +392,15 @@ class LegacyCleanup:
         if survey is not None and removed:
             pruned = self._prune_empty_dirs(survey.root, targets)
         if failures:
+            get_store().emit(
+                "legacy_cleanup_partial", removed=removed, failures=failures
+            )
             print(f"清理部分完成：已删除 {removed} 项；以下 {len(failures)} 项未完成：")
             for item in failures:
                 print(f"  {item}")
             return False
         summary = f"清理完成：共删除 {removed} 项"
+        get_store().emit("legacy_cleanup_completed", removed=removed, pruned=pruned)
         if pruned:
             summary += f"，回收空目录 {pruned} 个"
         print(f"{summary}。")
@@ -406,6 +435,7 @@ def interactive_cleanup(*, clear_data: bool, repository_root: Path) -> bool:
 
 
 def main() -> int:
+    install_script_logging("legacy-cleanup")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--clear-data",

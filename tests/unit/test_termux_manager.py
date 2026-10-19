@@ -606,6 +606,38 @@ def test_cancel_uninstall_leaves_running_service_and_files(installation, monkeyp
         process.wait(timeout=5)
 
 
+@pytest.mark.parametrize("clear_data", [False, True])
+def test_uninstall_clears_only_owned_default_diagnostics(
+    installation, monkeypatch, tmp_path, clear_data
+):
+    from aistudio_api.infrastructure.diagnostics.store import DiagnosticStore, LogPolicy
+
+    target = prepare_uninstall(installation)
+    logs = target.state_dir / "logs"
+    store = DiagnosticStore(LogPolicy(logs))
+    assert store.emit("before_uninstall", text="fixture diagnostic")
+    external = DiagnosticStore(LogPolicy(tmp_path / "external-logs"))
+    assert external.emit("external", text="preserve custom directory")
+    monkeypatch.setenv("AISTUDIO_LOG_DIR", str(logs))
+    monkeypatch.setattr("builtins.input", lambda _prompt: "UNINSTALL")
+    with operation_lock(target):
+        assert Uninstaller(target, clear_data=clear_data).run()
+    assert logs.exists() is not clear_data
+    assert store.emit("after_uninstall") is not clear_data
+    assert logs.exists() is not clear_data
+    assert external.files()
+
+
+def test_uninstall_refuses_to_claim_foreign_diagnostics(installation):
+    target = prepare_uninstall(installation)
+    logs = target.state_dir / "logs"
+    logs.mkdir(parents=True)
+    (logs / "personal.txt").write_text("keep unrelated data")
+    with pytest.raises(ManagerError, match="日志目录归属"):
+        Uninstaller(target, clear_data=True).paths()
+    assert (logs / "personal.txt").read_text() == "keep unrelated data"
+
+
 def test_uninstall_stops_owned_service_before_removing_runtime(
     installation, monkeypatch
 ):

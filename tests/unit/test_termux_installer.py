@@ -59,6 +59,23 @@ def disposable_install(tmp_path):
     shutil.copy(
         INSTALLER.parent / "termux_runtime.py", root / "scripts/termux_runtime.py"
     )
+    shutil.copy(
+        INSTALLER.parent / "termux_diagnostics.py",
+        root / "scripts/termux_diagnostics.py",
+    )
+    shutil.copy(INSTALLER, root / "scripts/install-termux.sh")
+    diagnostic_source = (
+        INSTALLER.parents[1] / "src/aistudio_api/infrastructure/diagnostics"
+    )
+    shutil.copytree(
+        diagnostic_source,
+        root / "src/aistudio_api/infrastructure/diagnostics",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    shutil.copy(
+        INSTALLER.parents[1] / "src/aistudio_api/__init__.py",
+        root / "src/aistudio_api/__init__.py",
+    )
 
     def git(*arguments):
         return subprocess.run(
@@ -75,6 +92,10 @@ def disposable_install(tmp_path):
         "config.yaml",
         "scripts/setup-env.sh",
         "scripts/termux_runtime.py",
+        "scripts/termux_diagnostics.py",
+        "scripts/install-termux.sh",
+        "src/aistudio_api/infrastructure/diagnostics",
+        "src/aistudio_api/__init__.py",
     )
     git("commit", "-m", "fixture")
     git("remote", "add", "origin", "https://github.com/ReedSein/aistudio-api.git")

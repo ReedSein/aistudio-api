@@ -6,6 +6,7 @@ import shlex
 import shutil
 from pathlib import Path
 
+from termux_diagnostics import get_store
 from termux_runtime import (
     ENTRY_MARKER,
     Installation,
@@ -14,6 +15,8 @@ from termux_runtime import (
     read_object,
 )
 from termux_update import Updater
+
+from aistudio_api.infrastructure.diagnostics.store import close_directory
 
 
 class Uninstaller:
@@ -70,6 +73,18 @@ class Uninstaller:
                 root / name for name in ("data", "dumps", "server-logs", ".env")
             )
             paths.extend([installation.config_file, record])
+            logs = installation.state_dir / "logs"
+            if logs.is_symlink():
+                paths.append(logs)
+            elif logs.exists():
+                marker = logs / ".aistudio-diagnostics-v1"
+                if (
+                    marker.is_symlink()
+                    or not marker.is_file()
+                    or marker.read_text() != "aistudio-api diagnostics v1\n"
+                ):
+                    raise ManagerError("无法确认诊断日志目录归属，未执行卸载。")
+                paths.append(logs)
         paths.extend(
             installation.state_dir / name
             for name in ("service.json", "last-update.json", "previous-uv.lock")
@@ -88,6 +103,7 @@ class Uninstaller:
         return paths
 
     def run(self) -> bool:
+        get_store().emit("uninstall_start", clear_data=self.clear_data)
         paths = self.paths()
         installation = self.installation
         if installation.development:
@@ -104,6 +120,7 @@ class Uninstaller:
             for path in (
                 installation.config_file,
                 installation.config_dir / "installation.json",
+                installation.state_dir / "logs",
                 *(
                     installation.root / name
                     for name in ("data", "dumps", "server-logs", ".env")
@@ -116,13 +133,18 @@ class Uninstaller:
             )
         print("共享系统工具、浏览器容器和自定义外部数据目录保留。")
         if input("输入 UNINSTALL 确认卸载，其他输入取消：").strip() != "UNINSTALL":
+            get_store().emit("uninstall_cancelled")
             print("已取消卸载。")
             return False
         Service(installation).stop()
+        get_store().emit("uninstall_confirmed", target_count=len(paths))
         for path in paths:
             if path.is_symlink() or not path.is_dir():
                 path.unlink(missing_ok=True)
             else:
                 shutil.rmtree(path)
+            if path == installation.state_dir / "logs":
+                close_directory(path)
         print("卸载完成。")
+        get_store().emit("uninstall_completed", clear_data=self.clear_data)
         return True

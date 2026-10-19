@@ -27,6 +27,7 @@ set -euo pipefail
 if [[ -z "${CLOAKBROWSER_PROJECT_DIR}" ]]; then
     CLOAKBROWSER_PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 fi
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/install-termux.sh" --logging-only run-chrome
 
 CLOAK_ROOT="${CLOAKBROWSER_PROJECT_DIR}/.cloakbrowser"
 
