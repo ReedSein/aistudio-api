@@ -1,4 +1,4 @@
-import { request } from './client.ts'
+import { request, requestBlob } from './client.ts'
 import type {
   StatsResponse,
   RotationStatusResponse,
@@ -13,10 +13,22 @@ import type {
   UpdateRuntimeConfigResponse,
   HealthCheckResponse,
   VersionNotice,
+  DiagnosticsStatus,
 } from '@/types'
 
 
 export const systemApi = {
+  getDiagnostics(): Promise<DiagnosticsStatus> {
+    return request<DiagnosticsStatus>('/api/diagnostics')
+  },
+
+  exportDiagnostics(): Promise<Blob> {
+    return requestBlob('/api/diagnostics/export', {
+      method: 'POST',
+      headers: { Accept: 'application/gzip' },
+    })
+  },
+
   health(): Promise<HealthCheckResponse> {
     return request<HealthCheckResponse>('/health')
   },

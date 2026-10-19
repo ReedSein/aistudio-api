@@ -17,13 +17,28 @@
 
 ```bash
 bash -c '
-set -eu
+set -euo pipefail
+umask 077
+log_dir="${AISTUDIO_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/aistudio-termux/logs}"
+test ! -L "$log_dir"
+mkdir -p -- "$log_dir"
+test ! -L "$log_dir/.aistudio-diagnostics-v1"
+if test -f "$log_dir/.aistudio-diagnostics-v1"; then
+  test "$(cat "$log_dir/.aistudio-diagnostics-v1")" = "aistudio-api diagnostics v1"
+else
+  test -z "$(ls -A -- "$log_dir")"
+  (set -C; printf "aistudio-api diagnostics v1\n" > "$log_dir/.aistudio-diagnostics-v1")
+fi
+chmod 700 -- "$log_dir"
+bootstrap_log=$(mktemp "$log_dir/script-bootstrap-XXXXXXXX.log")
+printf "Bootstrap log: %s\n" "$bootstrap_log"
 test -w "$TMPDIR"
 install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
-cleanup() { rm -rf -- "$install_tmp"; }
+cleanup() { status=$?; printf "bootstrap exit=%s\n" "$status" >> "$bootstrap_log"; rm -rf -- "$install_tmp"; return "$status"; }
 trap cleanup EXIT
 "$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
-  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh" 2>&1 | \
+  sed -u -E "s#(https?://)[^/@[:space:]]+:[^/@[:space:]]+@#\\1[REDACTED]@#gI" | tee -a "$bootstrap_log"
 bash "$install_tmp/install-termux.sh" "$@"
 ' --
 ```
@@ -32,13 +47,28 @@ bash "$install_tmp/install-termux.sh" "$@"
 
 ```bash
 bash -c '
-set -eu
+set -euo pipefail
+umask 077
+log_dir="${AISTUDIO_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/aistudio-termux/logs}"
+test ! -L "$log_dir"
+mkdir -p -- "$log_dir"
+test ! -L "$log_dir/.aistudio-diagnostics-v1"
+if test -f "$log_dir/.aistudio-diagnostics-v1"; then
+  test "$(cat "$log_dir/.aistudio-diagnostics-v1")" = "aistudio-api diagnostics v1"
+else
+  test -z "$(ls -A -- "$log_dir")"
+  (set -C; printf "aistudio-api diagnostics v1\n" > "$log_dir/.aistudio-diagnostics-v1")
+fi
+chmod 700 -- "$log_dir"
+bootstrap_log=$(mktemp "$log_dir/script-bootstrap-XXXXXXXX.log")
+printf "Bootstrap log: %s\n" "$bootstrap_log"
 test -w "$TMPDIR"
 install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
-cleanup() { rm -rf -- "$install_tmp"; }
+cleanup() { status=$?; printf "bootstrap exit=%s\n" "$status" >> "$bootstrap_log"; rm -rf -- "$install_tmp"; return "$status"; }
 trap cleanup EXIT
 "$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
-  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh" 2>&1 | \
+  sed -u -E "s#(https?://)[^/@[:space:]]+:[^/@[:space:]]+@#\\1[REDACTED]@#gI" | tee -a "$bootstrap_log"
 bash "$install_tmp/install-termux.sh" "$@"
 ' -- --dir "$HOME/projects"
 ```
@@ -63,13 +93,28 @@ aistudio
 
 ```bash
 bash -c '
-set -eu
+set -euo pipefail
+umask 077
+log_dir="${AISTUDIO_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/aistudio-termux/logs}"
+test ! -L "$log_dir"
+mkdir -p -- "$log_dir"
+test ! -L "$log_dir/.aistudio-diagnostics-v1"
+if test -f "$log_dir/.aistudio-diagnostics-v1"; then
+  test "$(cat "$log_dir/.aistudio-diagnostics-v1")" = "aistudio-api diagnostics v1"
+else
+  test -z "$(ls -A -- "$log_dir")"
+  (set -C; printf "aistudio-api diagnostics v1\n" > "$log_dir/.aistudio-diagnostics-v1")
+fi
+chmod 700 -- "$log_dir"
+bootstrap_log=$(mktemp "$log_dir/script-bootstrap-XXXXXXXX.log")
+printf "Bootstrap log: %s\n" "$bootstrap_log"
 test -w "$TMPDIR"
 install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
-cleanup() { rm -rf -- "$install_tmp"; }
+cleanup() { status=$?; printf "bootstrap exit=%s\n" "$status" >> "$bootstrap_log"; rm -rf -- "$install_tmp"; return "$status"; }
 trap cleanup EXIT
 "$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
-  https://raw.githubusercontent.com/ReedSein/aistudio-api-termux/master/scripts/install-termux.sh "$install_tmp/install-termux.sh"
+  https://raw.githubusercontent.com/ReedSein/aistudio-api-termux/master/scripts/install-termux.sh "$install_tmp/install-termux.sh" 2>&1 | \
+  sed -u -E "s#(https?://)[^/@[:space:]]+:[^/@[:space:]]+@#\\1[REDACTED]@#gI" | tee -a "$bootstrap_log"
 bash "$install_tmp/install-termux.sh" "$@"
 ' -- --dev --dir "$HOME/projects"
 ```
@@ -87,7 +132,8 @@ aistudio
 | 操作 | 行为 |
 |---|---|
 | 普通启动 | 在当前窗口显示日志；Ctrl+C 停止服务并返回菜单 |
-| 静默启动 | 后台运行；丢弃标准输出和错误，不写服务日志或请求转储 |
+| 静默启动 | 后台运行，隐藏终端输出，持续保存运行日志与请求、回复原文 |
+| 导出诊断包 | 打包已保留的运行、浏览器、脚本日志及对话原文，附环境摘要与缺失说明 |
 | 停止服务 | 核对进程身份和启动时间后停止；过期记录不会触发误杀 |
 | 检查更新 | 普通安装轻量检查维护者选定的正式发布，不拉取源码；开发用法检查本 fork 的 `master` |
 | 一键更新 | 更新应用、菜单、安装适配、锁定依赖及指定浏览器 |
@@ -96,7 +142,7 @@ aistudio
 | 卸载（保留数据） | 移除程序、运行环境、浏览器缓存和入口，保留配置、账号及统计 |
 | 卸载（清除数据） | 额外清除明确列出的本安装配置和数据，确认后执行 |
 
-默认端口是 11451，访问地址为 `http://127.0.0.1:11451/`。普通启动时终端会打印控制台地址；静默启动丢弃服务日志，该地址由菜单在启动成功后打印。端口可以在停止服务后修改：
+默认端口是 11451，访问地址为 `http://127.0.0.1:11451/`。普通启动时终端会打印控制台地址；静默启动隐藏终端输出，该地址由菜单在启动成功后打印。端口可以在停止服务后修改：
 
 ```bash
 aistudio --register --port 11451
@@ -114,10 +160,17 @@ aistudio --register --port 11451
 |---|---|
 | 安装路径、菜单端口、开发用法与浏览器容器 | `~/.config/aistudio-termux/installation.json` |
 | 应用配置 | `~/.config/aistudio-termux/config.yaml` |
+| 诊断日志 | `~/.local/state/aistudio-termux/logs/` |
 | 进程记录和操作锁 | `~/.local/state/aistudio-termux/` |
 | 账号、Cookie、统计和历史 | 项目已有的 `data/`，或原先配置的数据路径 |
 
 配置和状态目录遵循 `XDG_CONFIG_HOME`、`XDG_STATE_HOME`。首次接入复制当前配置，后续不会覆盖；Web 控制台编辑的是这个独立配置。静默启动仍正常保存账号和统计等应用数据。
+
+## 日志与故障导出
+
+运行过程和完整请求、回复原文默认持续记录，静默启动也保存。默认保留最近 7 天、总量最多 512 MiB；账号文件、浏览器登录目录和原始凭据不打包。菜单「导出诊断包」、`aistudio --export-logs` 和网页设置页使用同一个诊断包格式。
+
+服务或虚拟环境无法启动时，在项目目录运行 `bash scripts/export-diagnostics.sh`。系统 Python 不可用时会导出基础日志包并标明缺失信息。安装器下载前的失败保存在安装命令打印的 `script-bootstrap-*.log`，源码尚未下载时也可以直接发送该日志。详细范围、容量配置及维护者分析方式见 [诊断说明](./DIAGNOSTICS.md)。
 
 ## 更新规则与失败恢复
 
@@ -165,6 +218,7 @@ aistudio --uninstall --clear-data
 - 普通安装额外删除 Git 跟踪的程序文件及项目 `.git`；未接管的本地文件保留，存在源码修改或仅保存在本地的提交／暂存工作时停止卸载。开发用法保留所有源码、未提交修改及 Git 记录。
 - 默认保留独立配置、安装路径登记，以及项目的 `data/`、`dumps/`、`server-logs/` 和 `.env`。在原安装位置重跑同一种安装命令，可以继续使用这些配置和数据。
 - 清除数据选项额外删除上述项目内数据，以及管理器的 `config.yaml` 和 `installation.json`。删除不可自动恢复；开发工作区中作为源码保留的配置模板不受影响。
+- 清除数据选项还会在预览中列出并删除本安装状态目录下、能确认归属的默认诊断日志；自定义外部日志目录保留。保留数据卸载会保留诊断日志。
 - 共享 Termux 系统包、proot 浏览器容器和自定义外部数据路径保留。目录若是符号链接，只移除链接本身，不递归删除外部目标；未接管文件和操作锁可能使项目／状态目录继续存在。
 
 ## 清理原版安装

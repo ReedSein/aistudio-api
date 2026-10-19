@@ -35,7 +35,7 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
   onUnauthorizedHandler = handler
 }
 
-export async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+async function requestResponse(url: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers || {})
   const token = getToken()
 
@@ -81,10 +81,20 @@ export async function request<T>(url: string, options: RequestInit = {}): Promis
     throw new ApiError(response.status, errorDetail)
   }
 
+  return response
+}
+
+export async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const response = await requestResponse(url, options)
+
   // 204 No Content
   if (response.status === 204) {
     return {} as T
   }
 
   return response.json()
+}
+
+export async function requestBlob(url: string, options: RequestInit = {}): Promise<Blob> {
+  return (await requestResponse(url, options)).blob()
 }

@@ -14,13 +14,28 @@ Run in an interactive Termux terminal. The bootstrap uses Termux's bundled APT d
 
 ```bash
 bash -c '
-set -eu
+set -euo pipefail
+umask 077
+log_dir="${AISTUDIO_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/aistudio-termux/logs}"
+test ! -L "$log_dir"
+mkdir -p -- "$log_dir"
+test ! -L "$log_dir/.aistudio-diagnostics-v1"
+if test -f "$log_dir/.aistudio-diagnostics-v1"; then
+  test "$(cat "$log_dir/.aistudio-diagnostics-v1")" = "aistudio-api diagnostics v1"
+else
+  test -z "$(ls -A -- "$log_dir")"
+  (set -C; printf "aistudio-api diagnostics v1\n" > "$log_dir/.aistudio-diagnostics-v1")
+fi
+chmod 700 -- "$log_dir"
+bootstrap_log=$(mktemp "$log_dir/script-bootstrap-XXXXXXXX.log")
+printf "Bootstrap log: %s\n" "$bootstrap_log"
 test -w "$TMPDIR"
 install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
-cleanup() { rm -rf -- "$install_tmp"; }
+cleanup() { status=$?; printf "bootstrap exit=%s\n" "$status" >> "$bootstrap_log"; rm -rf -- "$install_tmp"; return "$status"; }
 trap cleanup EXIT
 "$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
-  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh" 2>&1 | \
+  sed -u -E "s#(https?://)[^/@[:space:]]+:[^/@[:space:]]+@#\\1[REDACTED]@#gI" | tee -a "$bootstrap_log"
 bash "$install_tmp/install-termux.sh" "$@"
 ' --
 ```
@@ -29,13 +44,28 @@ Choose a different parent directory, for example `~/projects/aistudio-api-termux
 
 ```bash
 bash -c '
-set -eu
+set -euo pipefail
+umask 077
+log_dir="${AISTUDIO_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/aistudio-termux/logs}"
+test ! -L "$log_dir"
+mkdir -p -- "$log_dir"
+test ! -L "$log_dir/.aistudio-diagnostics-v1"
+if test -f "$log_dir/.aistudio-diagnostics-v1"; then
+  test "$(cat "$log_dir/.aistudio-diagnostics-v1")" = "aistudio-api diagnostics v1"
+else
+  test -z "$(ls -A -- "$log_dir")"
+  (set -C; printf "aistudio-api diagnostics v1\n" > "$log_dir/.aistudio-diagnostics-v1")
+fi
+chmod 700 -- "$log_dir"
+bootstrap_log=$(mktemp "$log_dir/script-bootstrap-XXXXXXXX.log")
+printf "Bootstrap log: %s\n" "$bootstrap_log"
 test -w "$TMPDIR"
 install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
-cleanup() { rm -rf -- "$install_tmp"; }
+cleanup() { status=$?; printf "bootstrap exit=%s\n" "$status" >> "$bootstrap_log"; rm -rf -- "$install_tmp"; return "$status"; }
 trap cleanup EXIT
 "$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
-  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh" 2>&1 | \
+  sed -u -E "s#(https?://)[^/@[:space:]]+:[^/@[:space:]]+@#\\1[REDACTED]@#gI" | tee -a "$bootstrap_log"
 bash "$install_tmp/install-termux.sh" "$@"
 ' -- --dir "$HOME/projects"
 ```
@@ -64,7 +94,7 @@ This reuses existing configuration, accounts, data, ports, and the browser conta
 aistudio
 ```
 
-The menu offers foreground start, silent background start, stop, check for updates, update, uninstall, and an optional cleanup for the original author's installation. Public updates follow formal releases; development updates follow this fork's `master`. Ctrl+C stops a foreground service and returns to the menu. A silent service keeps running after the menu exits and writes no service logs or request dumps. Opening the menu briefly checks the latest formal release, and the console top bar shows the same notice; a failed check never blocks normal use.
+The menu offers foreground start, silent background start, stop, check for updates, update, uninstall, and an optional cleanup for the original author's installation. Public updates follow formal releases; development updates follow this fork's `master`. Ctrl+C stops a foreground service and returns to the menu. A silent service keeps running after the menu exits and retains runtime diagnostics and full request/response content. Export one support archive from the menu, the console Settings page, or `aistudio --export-logs`; authentication credentials are redacted. The default retention is seven days with a 512 MiB budget. Opening the menu briefly checks the latest formal release, and the console top bar shows the same notice; a failed check never blocks normal use.
 
 Uninstall keeps configuration, accounts, and statistics by default, with a separate option to clear installation data. The original-author cleanup likewise keeps accounts, settings, and browser login data unless its explicit clear-data choice is used. Both show their scope and require confirmation. Development source and Git history are retained, as are shared system packages and browser containers.
 
@@ -77,6 +107,7 @@ User configuration lives in `~/.config/aistudio-termux/`; existing account and s
 Installations follow `ReedSein/aistudio-api-termux` only. Maintainers evaluate and test changes from the original project before bringing them into this fork.
 
 - [Paths, ports, configuration, updates and recovery](./docs/TERMUX.md)
+- [Diagnostics, offline export and privacy](./docs/DIAGNOSTICS.md)
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Wire protocol](./docs/WIRE_SPECIFICATION.md)
 - [BotGuard verification](./docs/BOTGUARD_VERIFICATION_CHAIN.md)

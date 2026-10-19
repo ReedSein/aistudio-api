@@ -14,13 +14,28 @@
 
 ```bash
 bash -c '
-set -eu
+set -euo pipefail
+umask 077
+log_dir="${AISTUDIO_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/aistudio-termux/logs}"
+test ! -L "$log_dir"
+mkdir -p -- "$log_dir"
+test ! -L "$log_dir/.aistudio-diagnostics-v1"
+if test -f "$log_dir/.aistudio-diagnostics-v1"; then
+  test "$(cat "$log_dir/.aistudio-diagnostics-v1")" = "aistudio-api diagnostics v1"
+else
+  test -z "$(ls -A -- "$log_dir")"
+  (set -C; printf "aistudio-api diagnostics v1\n" > "$log_dir/.aistudio-diagnostics-v1")
+fi
+chmod 700 -- "$log_dir"
+bootstrap_log=$(mktemp "$log_dir/script-bootstrap-XXXXXXXX.log")
+printf "Bootstrap log: %s\n" "$bootstrap_log"
 test -w "$TMPDIR"
 install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
-cleanup() { rm -rf -- "$install_tmp"; }
+cleanup() { status=$?; printf "bootstrap exit=%s\n" "$status" >> "$bootstrap_log"; rm -rf -- "$install_tmp"; return "$status"; }
 trap cleanup EXIT
 "$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
-  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh" 2>&1 | \
+  sed -u -E "s#(https?://)[^/@[:space:]]+:[^/@[:space:]]+@#\\1[REDACTED]@#gI" | tee -a "$bootstrap_log"
 bash "$install_tmp/install-termux.sh" "$@"
 ' --
 ```
@@ -29,13 +44,28 @@ bash "$install_tmp/install-termux.sh" "$@"
 
 ```bash
 bash -c '
-set -eu
+set -euo pipefail
+umask 077
+log_dir="${AISTUDIO_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/aistudio-termux/logs}"
+test ! -L "$log_dir"
+mkdir -p -- "$log_dir"
+test ! -L "$log_dir/.aistudio-diagnostics-v1"
+if test -f "$log_dir/.aistudio-diagnostics-v1"; then
+  test "$(cat "$log_dir/.aistudio-diagnostics-v1")" = "aistudio-api diagnostics v1"
+else
+  test -z "$(ls -A -- "$log_dir")"
+  (set -C; printf "aistudio-api diagnostics v1\n" > "$log_dir/.aistudio-diagnostics-v1")
+fi
+chmod 700 -- "$log_dir"
+bootstrap_log=$(mktemp "$log_dir/script-bootstrap-XXXXXXXX.log")
+printf "Bootstrap log: %s\n" "$bootstrap_log"
 test -w "$TMPDIR"
 install_tmp=$(mktemp -d "$TMPDIR/aistudio-bootstrap.XXXXXX")
-cleanup() { rm -rf -- "$install_tmp"; }
+cleanup() { status=$?; printf "bootstrap exit=%s\n" "$status" >> "$bootstrap_log"; rm -rf -- "$install_tmp"; return "$status"; }
 trap cleanup EXIT
 "$PREFIX/lib/apt/apt-helper" -o Acquire::Retries=2 -o Acquire::https::Timeout=15 download-file \
-  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh"
+  https://github.com/ReedSein/aistudio-api-termux/releases/latest/download/install-termux.sh "$install_tmp/install-termux.sh" 2>&1 | \
+  sed -u -E "s#(https?://)[^/@[:space:]]+:[^/@[:space:]]+@#\\1[REDACTED]@#gI" | tee -a "$bootstrap_log"
 bash "$install_tmp/install-termux.sh" "$@"
 ' -- --dir "$HOME/projects"
 ```
@@ -65,9 +95,10 @@ aistudio
 ```
 
 - **普通启动**：前台显示日志，Ctrl+C 停止并返回菜单。
-- **静默启动**：后台运行，退出菜单后继续运行，不保存服务日志和请求转储。
+- **静默启动**：后台运行，退出菜单后继续运行；持续保存运行日志和请求、回复原文。
 - **停止服务**：核对进程身份后正常停止。
 - **检查更新**：检查维护者选定的正式版本；开发用法检查本仓库 `master`。
+- **导出诊断包**：将详细运行日志、对话原文和环境摘要打包，发送给维护者排查；也可使用 `aistudio --export-logs` 或网页设置页。
 - **一键更新**：更新项目、管理脚本、锁定的 Python 依赖和指定浏览器；浏览器版本未变时复用。
 - **清理原版安装**：可选清理原作者旧安装的程序与缓存，默认保留其账号、设置与浏览器登录资料；另有明确的清除资料选项。
 - **卸载**：默认保留配置、账号和统计，也可选择清除本安装数据；显示范围并确认后执行。开发工作区的源码和 Git 记录保留，共享系统工具及浏览器容器保留。
@@ -81,6 +112,7 @@ aistudio
 使用端只跟随 `ReedSein/aistudio-api-termux`；原作者的改动由维护者评估、测试后再吸收。
 
 - [安装路径、端口、配置、更新及恢复](./docs/TERMUX.md)
+- [日志采集、诊断包与隐私范围](./docs/DIAGNOSTICS.md)
 - [系统架构](./docs/ARCHITECTURE.md)
 - [Wire 协议](./docs/WIRE_SPECIFICATION.md)
 - [BotGuard 验证链](./docs/BOTGUARD_VERIFICATION_CHAIN.md)

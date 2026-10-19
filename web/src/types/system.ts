@@ -70,3 +70,14 @@ export interface VersionNotice {
   latest: string | null
   release_url: string | null
 }
+
+export interface DiagnosticsStatus {
+  directory: string
+  retention_days: number
+  max_bytes: number
+  file_count: number | null
+  total_bytes: number | null
+  oldest_file_time: string | null
+  collection_error: string | null
+  contains_conversation_content: boolean
+}

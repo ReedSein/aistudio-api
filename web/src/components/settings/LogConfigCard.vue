@@ -7,6 +7,7 @@ import Button from '@/components/ui/Button.vue'
 import ConfigSelect from '@/components/config/ConfigSelect.vue'
 import ConfigSwitch from '@/components/config/ConfigSwitch.vue'
 import ConfigInput from '@/components/config/ConfigInput.vue'
+import DiagnosticsCard from './DiagnosticsCard.vue'
 import {
   Activity,
   Save,
@@ -126,7 +127,7 @@ async function handleSave() {
       <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <ConfigSelect
           :model-value="logLevel"
-          label="日志输出级别"
+          label="终端日志输出级别"
           :options="logLevels"
           @update:model-value="logLevel = String($event || 'INFO')"
         />
@@ -136,8 +137,8 @@ async function handleSave() {
       <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <ConfigSwitch
           :model-value="dumpRequests"
-          label="请求报文转储"
-          description="在标准输出中打印完整的请求与响应详情"
+          label="附加报文打印"
+          description="在终端额外打印报文详情；诊断日志始终记录完整原文"
           @update:model-value="dumpRequests = $event"
         />
       </div>
@@ -170,5 +171,6 @@ async function handleSave() {
         />
       </div>
     </div>
+    <DiagnosticsCard />
   </div>
 </template>
