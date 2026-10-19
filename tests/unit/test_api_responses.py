@@ -206,6 +206,7 @@ async def test_handle_attempt_exception_retries_ambiguous_rpc_404_in_place():
             has_yielded_data=True,
         )
 
+
 @pytest.mark.asyncio
 async def test_build_gemini_streaming_response_passes_requested_model():
     from unittest.mock import MagicMock
@@ -227,9 +228,12 @@ async def test_build_gemini_streaming_response_passes_requested_model():
         passed_model = kwargs.get("model")
         yield ("chunk", b"data: test")
         yield ("finish_reason", "STOP")
+        yield ("done", None)
 
     mock_client = MagicMock(spec=AIStudioClient)
-    mock_client.stream_generate_content = MagicMock(side_effect=fake_stream_generate_content)
+    mock_client.stream_generate_content = MagicMock(
+        side_effect=fake_stream_generate_content
+    )
 
     req = GeminiGenerateContentRequest(
         contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])]
@@ -273,9 +277,12 @@ async def test_streaming_metadata_event_does_not_block_failover():
         # 第二次尝试：正常流式输出
         yield ("body", "Hello world after retry")
         yield ("finish_reason", "STOP")
+        yield ("done", None)
 
     mock_client = MagicMock(spec=AIStudioClient)
-    mock_client.stream_generate_content = MagicMock(side_effect=fake_stream_generate_content)
+    mock_client.stream_generate_content = MagicMock(
+        side_effect=fake_stream_generate_content
+    )
     mock_client.clear_templates = MagicMock()
 
     req = GeminiGenerateContentRequest(
@@ -312,6 +319,7 @@ async def test_streaming_emits_thought_signature_as_own_chunk():
         yield ("body", "Hello")
         yield ("thought_signature", "SIG-9")
         yield ("finish_reason", "STOP")
+        yield ("done", None)
 
     mock_client = MagicMock(spec=AIStudioClient)
     mock_client.stream_generate_content = MagicMock(

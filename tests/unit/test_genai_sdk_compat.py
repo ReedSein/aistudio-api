@@ -26,7 +26,7 @@ async def test_genai_sdk_aio_non_streaming(mock_client: MagicMock) -> None:
     """Test async non-streaming generation with official Google GenAI SDK."""
     mock_client.generate_content = AsyncMock(
         return_value=ModelOutput(
-            candidates=[Candidate(text="Hello from AI Studio!")],
+            candidates=[Candidate(finish_reason=1, text="Hello from AI Studio!")],
             usage={
                 "prompt_tokens": 10,
                 "completion_tokens": 20,
@@ -88,6 +88,9 @@ async def test_genai_sdk_aio_streaming(mock_client: MagicMock) -> None:
                 "total_tokens": 20,
             },
         )
+
+        yield ("finish_reason", 1)
+        yield ("done", None)
 
     mock_client.stream_generate_content = fake_stream
     app.dependency_overrides[get_client] = lambda: mock_client
@@ -160,6 +163,7 @@ async def test_genai_sdk_function_calling_and_response_flow(
             return ModelOutput(
                 candidates=[
                     Candidate(
+                        finish_reason=1,
                         text="",
                         function_calls=[
                             {
@@ -174,7 +178,8 @@ async def test_genai_sdk_function_calling_and_response_flow(
         return ModelOutput(
             candidates=[
                 Candidate(
-                    text="The current weather in San Francisco is sunny and 18°C."
+                    finish_reason=1,
+                    text="The current weather in San Francisco is sunny and 18°C.",
                 )
             ],
             usage={"prompt_tokens": 25, "completion_tokens": 15, "total_tokens": 40},
@@ -282,7 +287,7 @@ async def test_genai_sdk_tool_config_forwarding(mock_client: MagicMock) -> None:
     """Verify google-genai SDK tool_config (mode=ANY) is parsed and forwarded."""
     mock_client.generate_content = AsyncMock(
         return_value=ModelOutput(
-            candidates=[Candidate(text="Called")],
+            candidates=[Candidate(finish_reason=1, text="Called")],
             usage={"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
         )
     )

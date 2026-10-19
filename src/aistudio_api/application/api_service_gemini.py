@@ -1,12 +1,10 @@
-"""Gemini-compatible application service handlers."""
+"""Gemini-compatible response adapters over the shared generation lifecycle."""
 
 from __future__ import annotations
 
 import json
-import re
+from contextlib import aclosing
 
-from fastapi import HTTPException
-from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 
 from aistudio_api.api.response_models import (
@@ -16,31 +14,13 @@ from aistudio_api.api.response_models import (
 )
 from aistudio_api.api.responses import to_gemini_parts, to_gemini_usage_metadata
 from aistudio_api.api.schemas import GeminiGenerateContentRequest
-from aistudio_api.api.state import runtime_state
-from aistudio_api.application.account_orchestrator import (
-    MAX_RETRIES,
-    ensure_active_account,
-    record_rotator_event,
-    try_switch_account,
+from aistudio_api.application.generation_errors import (
+    classify_gemini_error_payload as classify_gemini_error_payload,
+    clean_upstream_error_message as clean_upstream_error_message,
+    handle_attempt_exception as handle_attempt_exception,
 )
-from aistudio_api.application.chat_service import (
-    normalize_gemini_request,
-)
-from aistudio_api.domain.errors import (
-    AistudioError,
-    AuthError,
-    RequestError,
-    SessionExpiredError,
-    UsageLimitExceeded,
-    is_browser_session_hang_error,
-    is_transient_rpc_error,
-    parse_upstream_grpc_error,
-)
+from aistudio_api.application.generation_service import generate_content, stream_content
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
-from aistudio_api.infrastructure.utils.logger import get_logger
-
-logger = get_logger("api.gemini")
-
 
 WIRE_TO_GEMINI_FINISH_REASON: dict[int, str] = {
     0: "FINISH_REASON_UNSPECIFIED",
@@ -70,230 +50,6 @@ def to_gemini_finish_reason(wire_code: int | None) -> str:
     return WIRE_TO_GEMINI_FINISH_REASON.get(wire_code, "FINISH_REASON_UNSPECIFIED")
 
 
-def clean_upstream_error_message(raw_msg: str) -> str:
-    """Extract a clean, readable error message from Google/JSPB upstream error strings."""
-    if not raw_msg:
-        return ""
-    text = raw_msg.strip()
-    if "[,[" not in text and "[null,[" not in text and not text.startswith("[,"):
-        return text
-    inner = text
-    while True:
-        m = re.match(r"^HTTP\s+\d+:\s*(.*)$", inner)
-        if m:
-            inner = m.group(1).strip()
-        else:
-            break
-    _, msg = parse_upstream_grpc_error(inner)
-    return msg or inner
-
-def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
-    """Extract standard Gemini HTTP status code, message, and status string from an exception."""
-    if isinstance(exc, SessionExpiredError):
-        return (
-            401,
-            "All accounts have expired sessions. Please import fresh cookies.",
-            "UNAUTHENTICATED",
-        )
-    if isinstance(exc, AuthError):
-        return 403, str(exc), "PERMISSION_DENIED"
-    if isinstance(exc, UsageLimitExceeded):
-        return 429, str(exc), "RESOURCE_EXHAUSTED"
-    if isinstance(exc, (ValueError, RequestValidationError)):
-        return 400, str(exc), "INVALID_ARGUMENT"
-    if isinstance(exc, HTTPException):
-        status = exc.status_code
-        detail = exc.detail
-        raw_msg = detail.get("message") if isinstance(detail, dict) else detail
-        msg = str(raw_msg) if raw_msg is not None else ""
-        clean_msg = clean_upstream_error_message(msg)
-        status_map = {
-            400: "INVALID_ARGUMENT",
-            401: "UNAUTHENTICATED",
-            403: "PERMISSION_DENIED",
-            404: "NOT_FOUND",
-            429: "RESOURCE_EXHAUSTED",
-            500: "INTERNAL",
-            503: "UNAVAILABLE",
-        }
-        return (
-            status,
-            clean_msg,
-            status_map.get(status, "INTERNAL" if status >= 500 else "UNKNOWN"),
-        )
-    if isinstance(exc, RequestError):
-        status = exc.status if exc.status > 0 else 500
-        clean_msg = clean_upstream_error_message(str(exc))
-        status_map = {
-            400: "INVALID_ARGUMENT",
-            401: "UNAUTHENTICATED",
-            403: "PERMISSION_DENIED",
-            404: "NOT_FOUND",
-            429: "RESOURCE_EXHAUSTED",
-            500: "INTERNAL",
-            503: "UNAVAILABLE",
-        }
-        return (
-            status,
-            clean_msg,
-            status_map.get(status, "INTERNAL" if status >= 500 else "UNKNOWN"),
-        )
-    if isinstance(exc, AistudioError):
-        return 500, str(exc), "INTERNAL"
-
-    return 500, str(exc), "INTERNAL"
-
-
-async def handle_attempt_exception(
-    exc: Exception,
-    *,
-    attempt: int,
-    model_path: str,
-    normalized_model: str | None,
-    client: AIStudioClient,
-    has_yielded_data: bool = False,
-) -> bool:
-    """Handle per-attempt error classification and account switching.
-
-    Returns True if the operation should be retried, or raises HTTPException / re-raises.
-    """
-    target_model = normalized_model or model_path
-    account_svc = runtime_state.account_service
-    active_acc = account_svc.get_active_account() if account_svc else None
-    failed_id = active_acc.id if active_acc else None
-
-    if isinstance(exc, ValueError):
-        raise HTTPException(
-            400, detail={"message": str(exc), "type": "bad_request"}
-        ) from exc
-
-    if isinstance(exc, SessionExpiredError):
-        logger.warning("账号会话失效，已被重定向到登录页: %s", exc)
-        client.clear_templates()
-        if not has_yielded_data and await try_switch_account(
-            model=target_model,
-            failed_account_id=failed_id,
-            is_auth_error=True,
-            is_session_expired=True,
-        ):
-            logger.info(
-                "已切换至其他可用健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES
-            )
-            return True
-        raise HTTPException(
-            401,
-            detail={
-                "message": "All accounts encountered login redirect or expired sessions. Please import fresh cookies.",
-                "type": "auth_error",
-            },
-        ) from exc
-
-    if isinstance(exc, AuthError):
-        logger.warning("账号 403 权限拒绝: %s", exc)
-        client.clear_templates()
-        record_rotator_event("auth_error", model=target_model)
-        if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=True
-        ):
-            logger.info("切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
-            return True
-        raise HTTPException(
-            403, detail={"message": str(exc), "type": "auth_error"}
-        ) from exc
-
-    if isinstance(exc, UsageLimitExceeded):
-        runtime_state.record(target_model, "rate_limited")
-        record_rotator_event("rate_limited", model=target_model)
-        if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id
-        ):
-            logger.info(
-                "429 触发限额，切换账号 (%d/%d): model=%s",
-                attempt + 1,
-                MAX_RETRIES,
-                target_model,
-            )
-            return True
-        logger.warning("全部账号在模型 %s 上均处于冷却状态", target_model)
-        raise HTTPException(
-            429,
-            detail={
-                "message": f"All accounts reached daily quota for model '{target_model}'. Quota resets at 00:00 PST.",
-                "type": "rate_limit_exceeded",
-            },
-        ) from exc
-
-    if (
-        isinstance(exc, RequestError)
-        and exc.status == 204
-        and attempt == 0
-        and not has_yielded_data
-    ):
-        logger.warning("Gemini 收到 204，清理模板缓存后重试一次")
-        client.clear_templates()
-        return True
-
-    # 针对 Google 上游偶发且完全随机的 RPC 路由 404 (Ambiguous request for service '' and method '/GenerativeService.*')：
-    # 此报错为上游端点偶发抖动，在未产生输出时当场立即重试（严禁切号以防浪费配额，其他 404 严格按原样报错抛出）
-    if is_transient_rpc_error(exc) and not has_yielded_data and attempt < MAX_RETRIES - 1:
-        logger.warning(
-            "检测到 Google 上游偶发 404 (Ambiguous RPC method)，当场立即重试 (%d/%d): %s",
-            attempt + 1,
-            MAX_RETRIES,
-            clean_upstream_error_message(str(exc)),
-        )
-        client.clear_templates()
-        return True
-
-    if is_browser_session_hang_error(exc):
-        logger.warning(
-            "模板或 BotGuard 捕获超时 (%d/%d): %s，切换账号重试",
-            attempt + 1,
-            MAX_RETRIES,
-            exc,
-        )
-        client.clear_templates()
-        if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=False
-        ):
-            logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
-            return True
-        if attempt < 2 and not has_yielded_data:
-            if client._session is not None:
-                await client._session._close_internal()
-            return True
-    if isinstance(exc, RequestError):
-        clean_msg = clean_upstream_error_message(str(exc))
-        status_code = exc.status if exc.status > 0 else 500
-        error_type = (
-            "bad_request"
-            if status_code == 400
-            else "not_found"
-            if status_code == 404
-            else "upstream_error"
-        )
-        logger.warning("Gemini 上游请求错误 (%d): %s", status_code, clean_msg)
-        raise HTTPException(
-            status_code, detail={"message": clean_msg, "type": error_type}
-        ) from exc
-
-    if isinstance(exc, AistudioError):
-        runtime_state.record(target_model, "errors")
-        record_rotator_event("error", model=target_model)
-        logger.warning("Gemini 服务端异常: %s", exc)
-        raise HTTPException(
-            500, detail={"message": str(exc), "type": "server_error"}
-        ) from exc
-
-    runtime_state.record(target_model, "errors")
-    record_rotator_event("error", model=target_model)
-    logger.error("Gemini 未知严重异常: %s", exc)
-    logger.debug("Gemini 异常堆栈详情:", exc_info=True)
-    raise HTTPException(
-        500, detail={"message": str(exc), "type": "server_error"}
-    ) from exc
-
-
 async def handle_gemini_generate_content(
     model_path: str,
     req: GeminiGenerateContentRequest,
@@ -305,90 +61,31 @@ async def handle_gemini_generate_content(
         return _build_gemini_streaming_response(
             client=client, req=req, model_path=model_path
         )
-
-    last_error: Exception | None = None
-    for attempt in range(MAX_RETRIES):
-        await ensure_active_account(attempt, model=model_path)
-        normalized = None
-        try:
-            normalized = normalize_gemini_request(req, model_path)
-            logger.info(
-                "Gemini 生成请求: model=%s, 对话轮数=%s, 流式=否, 尝试第 %d 次",
-                normalized.model,
-                len(req.contents),
-                attempt + 1,
-            )
-            output = await client.generate_content(
-                model=normalized.model,
-                capture_prompt=normalized.capture_prompt,
-                capture_images=normalized.capture_images,
-                contents=normalized.contents,
-                system_instruction_content=normalized.system_instruction,
-                tools=normalized.tools,
-                tool_config=normalized.tool_config,
-                safety_settings=normalized.safety_settings,
-                temperature=normalized.temperature,
-                top_p=normalized.top_p,
-                top_k=normalized.top_k,
-                max_tokens=normalized.max_tokens,
-                generation_config_overrides=normalized.generation_config_overrides,
-                sanitize_plain_text=False,
-            )
-
-            record_rotator_event("success", model=normalized.model)
-            runtime_state.record(normalized.model, "success", output.usage)
-            logger.info(
-                "Gemini 生成完成: model=%s, 输入Tokens=%s, 输出Tokens=%s",
-                normalized.model,
-                output.usage.get("prompt_tokens") if output.usage else 0,
-                output.usage.get("completion_tokens") if output.usage else 0,
-            )
-            return GeminiGenerateContentResponse(
-                candidates=[
-                    GeminiCandidateResponse(
-                        content=GeminiContentResponse(
-                            parts=to_gemini_parts(
-                                output.text,
-                                function_calls=output.function_calls,
-                                function_responses=output.function_responses,
-                                thinking=output.thinking,
-                                images=output.images,
-                                reasoning_images=output.reasoning_images,
-                                thought_signature=output.thought_signature,
-                            ),
-                        ),
-                        finishReason=to_gemini_finish_reason(
-                            output.candidates[0].finish_reason
-                            if output.candidates
-                            else None
-                        ),
-                        index=0,
+    normalized, output = await generate_content(model_path, req, client)
+    return GeminiGenerateContentResponse(
+        candidates=[
+            GeminiCandidateResponse(
+                content=GeminiContentResponse(
+                    parts=to_gemini_parts(
+                        output.text,
+                        function_calls=output.function_calls,
+                        function_responses=output.function_responses,
+                        thinking=output.thinking,
+                        images=output.images,
+                        reasoning_images=output.reasoning_images,
+                        thought_signature=output.thought_signature,
                     )
-                ],
-                usageMetadata=to_gemini_usage_metadata(output.usage),
-                modelVersion=normalized.model,
-                responseId=output.response_id or None,
+                ),
+                finishReason=to_gemini_finish_reason(
+                    output.candidates[0].finish_reason if output.candidates else None
+                ),
+                index=0,
             )
-        except Exception as exc:
-            last_error = exc
-            if await handle_attempt_exception(
-                exc,
-                attempt=attempt,
-                model_path=model_path,
-                normalized_model=normalized.model if normalized else None,
-                client=client,
-            ):
-                continue
-            raise
-
-
-    raise HTTPException(
-        429,
-        detail={
-            "message": f"All accounts reached daily quota for model '{model_path}'. Quota resets at 00:00 PST.",
-            "type": "rate_limit_exceeded",
-        },
-    ) from last_error
+        ],
+        usageMetadata=to_gemini_usage_metadata(output.usage),
+        modelVersion=normalized.model,
+        responseId=output.response_id or None,
+    )
 
 
 def format_sse_event(
@@ -500,90 +197,44 @@ def _build_gemini_streaming_response(
     model_path: str,
 ) -> StreamingResponse:
     async def stream_response():
-        normalized = None
+        model = model_path
+        usage = None
+        reason = "STOP"
+        response_id = None
         try:
-            logger.info(
-                "Gemini 流式请求: model=%s, 对话轮数=%s",
-                model_path,
-                len(req.contents),
-            )
-            final_usage: dict[str, object] | None = None
-            final_finish_reason: str = "STOP"
-            latest_response_id: str | None = None
-            for stream_attempt in range(MAX_RETRIES):
-                has_yielded_data = False
-                await ensure_active_account(stream_attempt, model=model_path)
-                normalized = normalize_gemini_request(req, model_path)
-                try:
-                    async for event_type, text in client.stream_generate_content(
-                        model=normalized.model,
-                        capture_prompt=normalized.capture_prompt,
-                        capture_images=normalized.capture_images,
-                        contents=normalized.contents,
-                        system_instruction_content=normalized.system_instruction,
-                        tools=normalized.tools,
-                        tool_config=normalized.tool_config,
-                        safety_settings=normalized.safety_settings,
-                        temperature=normalized.temperature,
-                        top_p=normalized.top_p,
-                        top_k=normalized.top_k,
-                        max_tokens=normalized.max_tokens,
-                        generation_config_overrides=normalized.generation_config_overrides,
-                        sanitize_plain_text=False,
-                        force_refresh_capture=stream_attempt > 0,
-                    ):
-                        if event_type == "usage":
-                            final_usage = text if isinstance(text, dict) else None
-                        elif event_type == "finish_reason":
-                            final_finish_reason = (
-                                to_gemini_finish_reason(text)
-                                if isinstance(text, int)
-                                else str(text)
-                            )
-                        elif event_type == "response_id":
-                            latest_response_id = str(text)
-                        else:
-                            chunk = format_sse_event(
-                                event_type,
-                                text,
-                                model_version=normalized.model,
-                                response_id=latest_response_id,
-                            )
-                            if chunk:
-                                has_yielded_data = True
-                                yield chunk
-                    break
-                except Exception as exc:
-                    if await handle_attempt_exception(
-                        exc,
-                        attempt=stream_attempt,
-                        model_path=model_path,
-                        normalized_model=normalized.model if normalized else None,
-                        client=client,
-                        has_yielded_data=has_yielded_data,
-                    ):
-                        continue
-                    raise
-
-            target_model = normalized.model if normalized else model_path
-            record_rotator_event("success", model=target_model)
-            if normalized is not None:
-                runtime_state.record(normalized.model, "success", final_usage)
-            logger.info(
-                "Gemini 流式完成: model=%s, 输入Tokens=%s, 输出Tokens=%s",
-                target_model,
-                final_usage.get("prompt_tokens") if final_usage else 0,
-                final_usage.get("completion_tokens") if final_usage else 0,
-            )
+            async with aclosing(stream_content(model_path, req, client)) as events:
+                async for kind, value in events:
+                    if kind == "model":
+                        model, usage, reason, response_id = (
+                            str(value),
+                            None,
+                            "STOP",
+                            None,
+                        )
+                    elif kind == "usage":
+                        usage = value if isinstance(value, dict) else None
+                    elif kind == "finish_reason":
+                        reason = (
+                            to_gemini_finish_reason(value)
+                            if isinstance(value, int)
+                            else str(value)
+                        )
+                    elif kind == "response_id":
+                        response_id = str(value)
+                    else:
+                        chunk = format_sse_event(
+                            kind, value, model_version=model, response_id=response_id
+                        )
+                        if chunk:
+                            yield chunk
             yield format_sse_usage(
-                final_usage,
-                finish_reason=final_finish_reason,
-                model_version=target_model,
-                response_id=latest_response_id,
+                usage,
+                finish_reason=reason,
+                model_version=model,
+                response_id=response_id,
             )
         except Exception as exc:
             yield format_sse_error(exc)
-
 
     return StreamingResponse(
         stream_response(),
