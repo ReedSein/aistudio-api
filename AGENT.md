@@ -1,245 +1,60 @@
-# 智能体协作与开发规范 (AGENT.md)
+# aistudio-api-termux 开发约定
 
-本文档面向所有参与本项目的代码代理（Coding Agents）与开发者，明确核心架构共识、运行环境约束与代码规范。
+本 fork 面向 Android ARM64 Termux，提供 Gemini 兼容接口与本地管理功能。项目规则随本 fork 的实现和维护目标更新。
 
----
+## 运行环境与事实来源
 
-## 目录
+- Python 在 Termux 宿主运行，开发命令通过 `uv` 执行；CloakBrowser 在 proot-distro 容器运行，通过项目内的 CDP 客户端控制。安装、启动、更新与发布任务先读 `docs/TERMUX.md`。
+- Python 依赖、测试选项和静态检查配置以 `pyproject.toml` 为准；前端命令以 `web/package.json` 为准；CI 的触发条件与执行步骤以 `.github/workflows/ci.yml` 为准。核对实际配置后使用命令。
+- `uv.lock` 是受版本控制的依赖结果。安装端按锁同步；依赖变更由维护者生成锁文件，并与依赖声明一起审查。验证已有环境使用 `uv run --no-sync`；环境缺依赖时，按当前平台的项目安装流程准备，报告尚未运行的检查。
+- 浏览器版本读取 `scripts/cloakbrowser.version`，格式规则读取 `pyproject.toml`。测试数量、文件数量、运行耗时和本机工具版本写入本次验证结果。
+- `web/src/` 是前端来源，`src/aistudio_api/static/` 由 `cd web && bun run build` 生成；前端变更需要一并检查生成结果。
+- Termux 临时文件使用已确认可写的 `$TMPDIR` 或 Python `tempfile`，只清理本次创建的临时目录。停止服务优先用 `aistudio` 菜单；手动停止时核对 `ps -eo pid,args` 中的 PID 后执行 `kill <PID>`。
 
-- [1. 核心架构与设计原则](#1-核心架构与设计原则)
-- [2. 运行时与环境约束 (Termux)](#2-运行时与环境约束-termux)
-- [3. 代码质量与类型规范](#3-代码质量与类型规范)
-- [4. 并发安全与多账号守则](#4-并发安全与多账号守则)
-- [5. 代码结构索引](#5-代码结构索引)
+## 修改时保持的约束
 
----
+- Gemini 请求和响应字段按协议保真处理；修改编解码前核对 `src/aistudio_api/infrastructure/gateway/wire_spec.py`、调用方及相关协议测试。协议索引在该规范模块表达。
+- 账号的凭据、浏览器上下文、模板和请求状态保持隔离；修改账号切换或刷新时验证就绪切换、在途请求和失败恢复。
+- 持久化账号资料沿用现有原子写入入口；凭据、真实账号导出和生产配置值不得进入日志、测试夹具或提交。
+- 内部接口调整同步更新调用方和测试；公开接口的兼容行为按已确认的合同处理。不能仅因测试通过，就把实现与需求之间的差异认定为正确。
+- 先定位受影响入口、调用方和测试，读足以判断修改的上下文；提交前审查本次完整差异与实际暂存路径。
 
-## 1. 核心架构与设计原则
+## 验证范围与命令
 
-`aistudio-api` 是 Google AI Studio 反向代理网关，提供原生 **Gemini API 兼容接口**（`/v1beta/...`）。
+按变更涉及的行为选择检查；先做能证明结果的最小检查，再覆盖受影响的集成边界。检查通过后，仅在后续修改、失败或尚未消除的风险影响证据时重跑。
 
-- **原生 Gemini 协议专一性**：服务于 Gemini 官方 API 规范（包含 thinking、multimodal、image-generation、function calling 等），不引入额外的跨厂商协议转译层。
-- **轻量 CDP 驱动**：使用纯 Python 异步 WebSocket 直连 Chrome DevTools Protocol（CDP），不依赖 Node.js、Playwright 或 Selenium。
-- **浏览器内 XHR Replay**：在 MakerSuite 页面上下文中执行携带 `withCredentials = true` 的异步 XHR 请求，天然复用完整的 Cookie 会话、BotGuard 快照与环境指纹。
-- **代码即事实标准（Code as Ground Truth）**：通过全量测试验证的代码是系统的事实标准。当技术规范文档与真实代码逻辑出现分歧时以代码为准，并在重构过程中同步更新文档。
-- **架构事实优先（Fact & Architecture over Brittle Tests）**：保持架构整洁与低耦合。避免为了迁就耦合了私有变量的脆弱 mock 测试而妥协生产设计；遇冲突时应重构测试以对齐公共接口契约，消除抽象泄露。
-- **协议索引常量化（Specification Constants & No Magic Numbers）**：Protobuf-over-JSON 逆向数组索引统一提取为具备明确语义的规范枚举或常量（如 `wire_spec.py`），杜绝裸数字散落业务逻辑中。
+| 变更范围 | 验证要求与命令 |
+|---|---|
+| 纯文档或项目指令 | 核对路径、命令来源、链接、权限与规则冲突；用具体任务检查规则能否给出一致结论；运行 `git diff --check`。 |
+| Python 源码或测试 | 运行相关 pytest 模块；执行 `uv run --no-sync ruff check .` 和 `bun x pyright src scripts tests`；对本次修改的 Python 文件执行 `uv run --no-sync ruff format --check`，逐个传入实际文件路径。 |
+| 共享后端、安装更新、依赖或测试配置 | 除直接回归检查外，运行 `uv run --no-sync pytest`；依赖和配置变更还需验证受影响的平台与安装路径。 |
+| Shell 安装或管理脚本 | 对改动脚本运行 `bash -n`，补充相关安装测试；在隔离目录使用包管理器、网络与容器的替身验证失败路径。 |
+| 浏览器 JavaScript | 对改动文件运行 `bun build` 的 `--no-bundle` 语法检查，并执行受影响的 Python 协议或浏览器测试。 |
+| 前端 | 在 `web/` 执行 `bun run lint`、`bun run type-check`、`bun run build`，检查静态产物。 |
+| Android | 在具备 Android 构建环境的机器或 CI 的 `android/` 目录执行 `./gradlew :app:lintDebug :app:ktlintCheck`；涉及打包时验证 `./gradlew :app:assembleRelease`。 |
 
-## 2. 运行时与环境约束 (Termux)
+没有进入变更影响范围的平台无需为本次任务构建。全库格式检查用于格式配置变更、全库整理或定位整体状态；使用 `uv run --no-sync ruff format --check .`，不把文件数量作为通过条件。
 
-Python 工具链运行在 Termux 宿主（通过 `uv` 管理虚拟环境）；Chromium（CloakBrowser）由于 glibc/bionic ABI 差异，运行在 `proot-distro` Linux 容器中。CDP 通过内置的 `cdp_client.py` 经由 WebSocket 直连。
+静态检查、自动化测试、构建、真实 Termux 安装运行和真实账号调用分别报告。检查缺失、环境不具备或命令执行失败均写明，不能记为通过；真实环境验证必须符合当前任务的授权范围。
 
-### 2.1 环境准备与启动流程
+## 失败如何处理
 
-```bash
-# 1. 宿主依赖环境配置与同步
-bash scripts/setup-env.sh
-uv sync
+本次引入或影响本次目标的失败必须查明并修复；无法在授权范围内解决时，停止受阻的提交或交付并报告证据。
 
-# 2. 准备受控浏览器运行时（仅首次执行）
-bash scripts/setup-browser.sh
+全库检查发现旧失败时，仅在以下条件全部满足后，才可记录为已知基线失败并继续已授权的本地提交：
 
-# 3. 启动服务
-uv run python3 main.py server
-```
+1. 在修改前的基线提交上，用相同工具版本、配置和命令复现相同的失败位置与原因。
+2. 失败与本次改动及其依赖、行为和验收目标无关；本次没有新增或扩大失败。
+3. 本次所需检查已通过，修改的 Python 文件均通过格式检查，完整差异已审查。
+4. 提交说明和交付报告写明基线提交、复现命令、失败项目及剩余影响，保留全库检查的真实失败状态。
 
-> [!NOTE]
-> - `uv` 会解析 `uv.lock` 中的跨平台镜像索引与预编译 wheel，避免在 Termux 环境因编译 Rust 消耗过多内存导致 OOM。
-> - `scripts/cloakbrowser_termux/run-chrome.sh` 是 Termux 下的 Chromium 包装入口，内部调用 `proot-distro login` 进入 `AISTUDIO_PROOT_NAME` 指定的容器（新安装默认 `aistudio-api-termux`，旧安装沿用登记容器）并自动绑定路径。
+工具、依赖或配置变更引发的失败属于本次变更。旧问题会影响本次交付的功能、安全或数据完整性时，仍属本次受阻因素；证据不足时先继续查明。
 
-### 2.2 前端构建与管理
+历史问题的修复按相应任务范围实施。检查或断言本身有误时，依据需求与代码证据在批准范围内修正并验证；不得为掩盖失败而禁用检查、扩大忽略范围或削弱断言。本地提交的判断不替代远端 CI、合并条件或正式发布验证。
 
-- 前端位于 `web/` 目录，基于 Vite + Vue 3 + TypeScript + Tailwind CSS。
-- 依赖管理与构建使用 `bun`（`bun run dev`、`bun run build`、`bun run lint`、`bun run type-check`）。
-- 生产构建产物直接输出至 `src/aistudio_api/static/`，由 FastAPI 静态托管。
+## 持续维护与发布
 
-### 2.3 Android 伴侣端 (android/)
-
-- 源码位于 `android/` 目录，基于 Jetpack Compose + Material 3 构建，用于移动端多账号 Cookie 提取。
-- 包含多 Profile 隔离、按需启动 WebView（不常驻内存）以及 Bitwarden 自动填充适配。
-- 代码规范检查使用 `ktlint`，规则配置于 `android/.editorconfig`。
-- 检查命令：`ktlint "android/app/src/main/java/**/*.kt"`。
-
-### 2.4 常见排错
-
-| 现象 | 原因 | 处理方案 |
-|---|---|---|
-| `[Errno 98] address already in use` | 端口被占用或上一次服务未完全退出 | 执行 `pkill -f 'main.py server'` 后重试，或指定 `--port <other_port>` |
-| `Chromium CDP endpoint on port N not ready` | proot 容器未启动或缺少 apt 依赖 | 重新运行 `bash scripts/setup-browser.sh` |
-| `proot-distro login: container 'aistudio-api-termux' is missing` | 容器尚未创建或被改名 | 运行安装脚本创建容器，或通过 `AISTUDIO_PROOT_NAME` 指定现有容器 |
-| `pydantic-core` 报 `GLIBC_X.Y not found` | 使用了系统 pip 安装而非 `uv` | 清理 `.venv/` 后重新执行 `uv sync` |
-
-### 2.5 临时文件与目录规范 (Termux)
-
-- **避免硬编码 `/tmp`**：Android Termux 环境中不存在系统级 `/tmp` 目录。在代码、测试、脚本或临时分析中严禁硬编码 `/tmp/`，否则会引发 `FileNotFoundError: [Errno 2] No such file or directory: '/tmp'`。
-- **统一使用 `tempfile` / `$TMPDIR`**：所有临时目录或文件操作必须通过 `tempfile.gettempdir()` 或 `tempfile.mkdtemp()` 创建（自动安全解析至 `$TMPDIR` 即 `/data/data/com.termux/files/usr/tmp`），并在操作完成后通过 `try...finally` 与 `shutil.rmtree` 及时清理。
----
-
-## 3. 代码质量与类型规范
-
-本项目启用了严格的静态类型检查与代码质量工具链：
-
-### 3.1 类型安全要求
-
-- **避免 `Any` 滥用**：在公共接口、领域模型与核心流程中避免无约束的 `Any`。
-- **未知数据收窄**：对于动态解析的数据，使用 `object` 配合 `isinstance` 进行类型收窄。
-- **结构化定义**：数据结构使用具名 dataclass（如 `NormalizedGeminiRequest`、`AccountMeta`）或明确泛型类型标注（如 `dict[str, object]`）。
-
-### 3.2 Ruff 代码风格与规范配置
-
-项目采用 Ruff 作为统一的 Python 代码风格与 Lint 工具，并在 `pyproject.toml` 中开启了严格的规则检查：
-
-- **激活规则集**：
-  - `E` / `W` (pycodestyle 错误与警告)
-  - `F` (Pyflakes 代码逻辑错误)
-  - `I` (isort 自动 import 排序)
-  - `B` (flake8-bugbear 常见陷阱与 Bug 预防)
-  - `C4` (flake8-comprehensions 列表推导式优化)
-  - `UP` (pyupgrade Python 3.11+ 语法升级)
-  - `SIM` (flake8-simplify 代码精简，强制 `contextlib.suppress` 替代 `try-except-pass`)
-  - `PTH` (flake8-use-pathlib 规范使用 Pathlib)
-  - `RUF` (Ruff 专有规则检查)
-  - `ASYNC` (flake8-async 异步编程反模式检查，如 `asyncio.Event` 替代轮询睡眠)
-  - `PIE` (flake8-pie 冗余代码消除)
-  - `Q` / `RSE` / `RET` (引号、raise 括号与返回值规范)
-  - `A` (内建函数命名防覆盖)
-  - `YTT` (flake8-2020 版本兼容性检查)
-- **全局豁免（均有明确理由）**：
-  - `B008`：FastAPI `Depends()` 注入参数的标准模式
-  - `RUF001` / `RUF002` / `RUF003`：注释与文档字符串中的中文全角标点（项目文档语言为中文）
-  - `ASYNC109` / `ASYNC230` / `ASYNC240`：异步函数中的超时参数与本地文件访问（单机自托管场景）
-  - `E501`：行宽由 formatter 统一处理
-- **按文件豁免**：`main.py` 豁免 `E402`（启动时需先注入 `sys.path`）；`tests/**` 豁免动态殊性规则
-- **检查与格式化指令**：
-  ```bash
-  # 代码风格与 Lint 检查
-  ruff check .
-  # 自动格式化与 import 排序修复
-  ruff check . --fix
-  ```
-### 3.3 智能体工具调用与开发工作守则
-
-为保障代码修改的准确性、交互效率并最大化利用大上下文模型能力，智能体与开发者必须严格遵循以下高优先级操作准则：
-
-1. **优先读取完整文件，严禁滥用范围截断与 raw（Full Reads Only）**：
-   - 查看代码、测试及文档文件时，**一律使用完整的相对文件路径读取完整文件**。
-   - **严禁无端添加行号范围选择器（如 `:1-50`）或 `:raw`**，避免局部切片截断导致上下文断裂、误判函数边界，或由于行号漂移造成后续 `edit` 命中失败被拦截。
-2. **批量并发读取（Batch Parallel Reads）**：
-   - 涉及多个独立文件、测试文件或模块的调研比对时，在单个响应轮次中同时并发发起多个 `read` 调用。
-   - 避免逐个串行读取导致多轮调用消耗上下文与拖慢交互。
-3. **严禁滥用 `eval` 执行文件查看（No Eval Abuse）**：
-   - 查看文件内容、定位符号与阅读代码必须使用专业的 `read` / `grep` 工具，**严禁使用 `eval` 编写 Python 文件读取脚本来替代 `read`**。
-   - `eval` 仅限用于必要的复杂内存原型运算、即时逻辑求值或重现动态执行结果，非必要绝不滥用。
-4. **统一强制使用 `uv` 工具链（Enforce uv）**：
-   - 执行 Python 脚本、测试套件（`uv run pytest`）、代码检查（`uv run ruff check .`）与包同步（`uv sync`）**一律通过 `uv` 调用**。
-   - 严禁调用系统裸 `python`、`python3` 或 `pip`，确保所有依赖与环境均在受控的虚拟环境内运行。
-5. **任务清单 (todo) 保持敏捷与批量操作**：
-   - 待办事项完成时，**允许并鼓励一次性全部批量划掉**，严禁机械地一轮交互只标记一个任务。
-   - 专注推动实质性工程进展，避免频繁产生仅包含待办状态翻转的无效上下文。
-6. **精炼克制（No Bloat）**：
-   - 方案设计、代码修改与文档更新直击痛点。
-   - 避免引入形式主义的胶水层、过度抽象与冗余样板代码，保持代码与文档紧凑精炼。
-7. **交付前全量审查完整 diff（Review Full Diff）**：
-   - 每次提交或报告完成前，**必须完整查看整个 `git diff`（不带行数折叠与省略）**，逐行确认所有改动准确无误、没有残留调试代码或意外破损。
-   - 确保 `uv run ruff check .`、`bun x pyright` 和 `uv run pytest` 全部零报错通过后再行提交。
-8. **微创编辑优先与 Diff 审计守则（Prefer Edit & Mandatory Diff Inspection）**：
-   - 局部功能调整或代码重构**一律优先使用精准微创的 `edit`**，避免全文件重写引入非预期的代码格式漂移与无关变动。
-   - 仅在新建文件、大型嵌入脚本提取（`src/.../js/*.js`）或结构彻底颠覆时使用 `write`。**使用 `write` 进行文件覆盖后，必须在第一时间执行 `git diff` 进行全量逐行审计**，确保无意外功能遗漏、截断或回退。
-9. **零 Shim 容忍与干净重构（Clean Cutover Refactoring）**：
-   - 重构内部函数或类方法签名时，必须实施**一步到位的原子切换（Atomic Cutover）**。
-   - **严禁保留 `@deprecated` 向下兼容存根、无意义的历史 shim 别名包装或 `_unused_*` 废弃形参**；全库一次性完整迁移所有调用方和对应测试断言。
-
-### 3.4 自动化检查命令与执行守则
-
-在提交代码改动前，必须确保以下工具链检查通过：
-
-| 工具 / 阶段 | 命令 | 判定标准 |
-|---|---|---|
-| **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
-| **Python 代码格式化** | `uv run ruff format --check .` | 72 files already formatted |
-| **Python 类型检查** | `bun x pyright src tests` | 0 errors |
-| **Python 单元测试** | `uv run pytest` | 全部通过 (221 passed) |
-| **浏览器 JS 语法校验** | `for f in src/aistudio_api/infrastructure/browser/js/*.js; do bun build "$f" --no-bundle >/dev/null; done` | 0 errors |
-| **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
-| **前端类型检查** | `cd web && bun run type-check` | 0 errors |
-| **前端生产构建** | `cd web && bun run build` | 构建成功并更新 static 产物 |
-| **Android 静态检查 (Lint & 代码规范)** | `cd android && ./gradlew :app:lintDebug :app:ktlintCheck` 或 `ktlint "android/app/src/main/java/**/*.kt"` | 0 errors |
-> [!NOTE]
-> **跨平台原生二进制依赖与开发工具**：
-> - `pydantic-core` 等依赖在 PyPI 上无预编译 Android wheel，而 Termux 的 TUR 源无桌面端 wheel。因此 `uv.lock` 纳入 `.gitignore`：桌面端直接从 PyPI 安装对应 wheel；Termux 端通过 `setup-env.sh` 生成本地 `uv.toml` 使用 TUR 源，避免不同平台的 wheel 源锁定冲突，各平台均直接使用二进制 wheel 避免源码编译。
-> - `ruff` 作为开发阶段的 Lint 工具，在 `pyproject.toml` 的 dev 依赖中配置了平台标记 `ruff>=0.8.0; sys_platform != 'android'`；桌面平台（Linux / macOS / Windows）执行 `uv sync --extra dev` 时直接自 PyPI 下载预编译 wheel。而在 Android Termux 环境下，TUR 并未打包 ruff 的 PyPI wheel，开发者可通过 Termux 原生包管理器 `pkg install -y ruff` 直接获得编译好的 aarch64 native 二进制，`setup-env.sh` / `setup-browser.sh` 会自动建立 `.venv/bin/ruff` 软链以便在虚拟环境中直接调用，普通用户生产运行无需安装。
-
-> [!TIP]
-> **避免无效重跑**：若在当前交互轮次中未发生代码或配置文件的实质性变动，无需重复执行全量类型与测试套件检查。
-
-## 4. 并发安全与多账号守则
-
-> [!IMPORTANT]
-> 1. **原子化文件持久化**：所有持久化文件（`registry.json`、`auth.json`、`meta.json` 等）操作必须使用 `account_store._atomic_write_json`（写入临时文件后通过 `os.replace` 原子替换），防止并发写入截断。
-2. **蓝绿会话平滑热切与就绪门机制**：切换账号时，`BrowserSession` 在后台创建独立新标签页，注入 Cookie、完成页面导航与 BotGuard 握手验证；验证通过后原子翻转 `SessionReadinessGate` 并将新上下文设为就绪。旧会话上下文加入退休队列，优雅等待在途流式请求排干（`decr_in_flight()` 触发 `drain_event`）后再行关闭，保障流式请求平滑过渡零中断。
-3. **缓存与模板隔离**：账号切换、429 限流或 403 鉴权重试时，调用 `client.clear_templates()`，避免跨账号复用请求模板。快照签名按每次请求哈希实时生成，绝不跨请求共享。初次握手截获基线模板后，任意目标模型通过 `capture_template(model)` 纯内存动态适配参数。
-4. **鉴权故障快速隔离与自愈**：当遇到 `The caller does not have permission` (403) 时，立即将当前账号置入 `auth_cooldown` 并快速故障转移至健康账号；单账号或备用号耗尽时自动触发在位强制刷新与 BotGuard 重握手自愈。
-5. **无全局 DOM 污染**：页面内 JavaScript 交互使用局部闭包 `Promise` 返回数据，不在 `window` 对象上遗留全局共享状态。
-6. **Cookie 智能精简与天然协商**：外部导入 Cookie 时自动过滤旧设备或跨 IP 绑定的易腐败凭据（`OSID`、`__Secure-OSID`、`SIDCC` 及 `_ga` 等追踪标记），保留核心认证项（`SID`、`SAPISID`、`1PSIDTS`）。浏览器访问 AI Studio 时自动协商出绑定当前网络/TLS 的全新有效 `OSID`，杜绝 403 权限拒绝。
-7. **真实环境伪装与低内存协同**：保留 `--renderer-process-limit=1`、`--in-process-gpu` 与 128MB V8 内存限制以保障 Android 低 RAM 运行；移除 `--disable-software-rasterizer` 并启用 `--use-gl=angle --use-angle=swiftshader` 恢复软件 WebGL 上下文，保留 `--mute-audio` 并移除 `--disable-audio` 保护 AudioContext；统一注入 `--fingerprint-platform=windows` 伪装为 Windows 桌面环境，并通过原生 `--fingerprint-timezone` 与 Wire 协议层保持时区/位置严格一致。
-8. **账号接口解耦与 SPA 缓存隔离**：对外标准 REST 接口统一位于 `/api/accounts`（保持 `/accounts` 向下兼容），并在 SPA 单页应用与 API 响应中下发 `Vary: Accept` 与 `Cache-Control: no-store`，杜绝浏览器与代理网关发生缓存错乱。
-
-## 5. 代码结构索引
-
-```text
-aistudio-api/
-├── web/                           # Web 管理控制台 (Vite + Vue 3 + TS + Tailwind)
-│   ├── src/
-│   │   ├── api/                   # REST 请求封装 (auth, accounts, system, models)
-│   │   ├── types/                 # TypeScript 类型契约
-│   │   ├── stores/                # Pinia 状态管理
-│   │   ├── components/            # UI 与业务解耦组件
-│   │   ├── views/                 # 页面路由视图 (Dashboard, Accounts, Settings, Login)
-│   │   └── router/                # Vue Router 路由与守卫
-│   └── vite.config.ts             # 构建配置 (输出至 src/aistudio_api/static)
-├── android/                       # Android 伴侣端：多资料凭据提取器 (Jetpack Compose + Material 3)
-│   ├── app/src/main/
-│   │   ├── AndroidManifest.xml    # 声明 BROWSABLE / http / https 意图，适配 Bitwarden
-│   │   └── java/com/aistudio/extractor/
-│   │       ├── MainActivity.kt    # 单 Activity、SAF 导出/备份导入
-│   │       ├── data/              # ProfileItem / AccountBundle / ProfileManager
-│   │       └── ui/                # Material 3 主题、MainScreen、按需挂载的 LoginScreen
-│   ├── build.gradle.kts           # 根构建脚本
-│   └── .editorconfig              # ktlint 代码规范配置
-├── userscript/                    # 浏览器端油猴脚本：在 aistudio.google.com 抓取 Cookie 推送到本服务
-├── src/aistudio_api/
-│   ├── api/                       # HTTP 接口层 (FastAPI)
-│   │   ├── app.py                 # 应用生命周期与静态托管
-│   │   ├── dependencies.py        # API Key 与 Token 鉴权注入
-│   │   ├── routes_gemini.py       # /v1beta/models/*:generateContent 路由
-│   │   ├── routes_models.py       # /v1beta/models 模型发现路由
-│   │   ├── routes_accounts.py     # 账号管理与探活路由
-│   │   ├── routes_system.py       # 监控指标、日志配置与 config.yaml 热重载路由
-│   │   ├── state.py               # 运行时全局单例容器 (RuntimeState)
-│   │   ├── schemas.py             # API 请求与校验模型
-│   │   ├── responses.py           # Gemini API 响应格式化辅助工具
-│   │   └── response_models.py     # API Pydantic 响应模型
-│   ├── application/               # 业务应用层
-│   │   ├── account_rotator.py     # 黏性账号调度器 (按模型记录 429 与太平洋午夜重置)
-│   │   ├── account_service.py     # 账号存储与激活上下文协调
-│   │   ├── api_service_gemini.py  # Gemini 请求生命周期与流式处理
-│   │   ├── account_orchestrator.py# _switch_lock 防雪崩切号与故障转移编排
-│   │   └── chat_service.py        # 消息规范化与多模态数据处理
-│   ├── domain/                    # 纯净领域模型与异常体系
-│   │   ├── errors.py              # 业务异常定义 (AuthError, UsageLimitExceeded 等)
-│   │   └── models.py              # 领域数据结构 (Candidate, ModelOutput 等)
-│   ├── infrastructure/            # 基础设施层
-│   │   ├── account/               # Cookie 解析、会话刷新与凭据持久化 (account_store, cookie_parser)
-│   │   ├── browser/               # 异步 CDP 客户端与 CloakBrowser 进程管理 (cdp_client, browser_engine)
-│   │   └── gateway/               # 会话状态机 (session_state)、蓝绿就绪门 (session)、鉴权凭据 (session_auth)、WAA探针 (botguard_bootstrap)、Wire编解码与流式管道
-├── config.yaml                    # 模型规则、运行参数与工具默认行为配置 (支持在线热重载)
-├── main.py                        # 本地统一启动入口
-└── tests/                        # 单元测试套件 (模块化轻量架构，全量通过 <5s)
-│   ├── conftest.py               # 气密性隔离配置 (monkeypatch AISTUDIO_* 数据目录)
-│   ├── fixtures/                 # 真实 Protobuf JSON 请求与响应报文
-│       └── unit/                     # 25 个按职责严格划分的单元测试模块
-│       ├── test_account_*        # 账号调度、并发轮换防雪崩与凭据导入
-│       ├── test_api_*            # API 鉴权、响应序列化与模型/系统路由
-│       ├── test_browser_*        # Chromium 进程看门狗、CDP 会话与页面生命周期
-│       └── test_wire_*           # Protobuf-over-JSON 编解码、流式解析与模型规则
-```
+- 变更影响命令、运行方式、依赖、发布行为或项目约束时，在已批准范围内同步更新相关说明；超出范围的规则调整提出具体修订。处理同一规则时检查并移除相冲突的旧说法。
+- 吸收上游变更时，审查其中的规则、脚本和文档是否适用于本 fork。采用后的内容由本 fork 维护，按当前目标和证据修订。
+- 可从配置和代码直接取得的清单留在其事实来源；本文件保留执行入口、容易误判的约束与验证判定。添加规则时同时检查是否有过期或重复内容可移除。
+- 普通安装跟随本 fork 的最新正式 Release；开发安装跟随其开发模式。正式发布的标签和安装附件要求见 `docs/TERMUX.md` 的“发布正式版本”。本地提交、推送源码和发布分别按授权执行。
