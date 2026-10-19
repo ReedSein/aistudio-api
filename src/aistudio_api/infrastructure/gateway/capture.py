@@ -6,8 +6,11 @@ import asyncio
 from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
+from aistudio_api.infrastructure.diagnostics.redaction import REDACTED, sanitized_json
+from aistudio_api.infrastructure.diagnostics.store import get_store
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.wire_codec import modify_body
+from aistudio_api.infrastructure.gateway.wire_spec import TopLevelIndex
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -94,6 +97,16 @@ class RequestCaptureService:
             body=body,
             model=model,
             snapshot=snapshot,
+        )
+        import json
+
+        diagnostic_body = json.loads(body)
+        diagnostic_body[TopLevelIndex.SNAPSHOT] = REDACTED
+        get_store().text(
+            "upstream_request_body",
+            sanitized_json(diagnostic_body),
+            model=model,
+            browser_context=self._active_ctx_id,
         )
         logger.info(
             "Hook 拦截成功: model=%s, snapshot=%s chars, body=%s chars",

@@ -68,7 +68,7 @@ def test_logger_namespace_hierarchy():
 def test_dynamic_log_level_switching():
     setup_logging("INFO")
     assert get_log_level() == "INFO"
-    assert logging.getLogger("aistudio").level == logging.INFO
+    assert logging.getLogger("aistudio").level == logging.DEBUG
 
     set_log_level("DEBUG")
     assert get_log_level() == "DEBUG"
@@ -76,11 +76,11 @@ def test_dynamic_log_level_switching():
 
     set_log_level("WARNING")
     assert get_log_level() == "WARNING"
-    assert logging.getLogger("aistudio").level == logging.WARNING
+    assert logging.getLogger("aistudio").level == logging.DEBUG
 
     set_log_level(logging.ERROR)
     assert get_log_level() == "ERROR"
-    assert logging.getLogger("aistudio").level == logging.ERROR
+    assert logging.getLogger("aistudio").level == logging.DEBUG
 
     # 恢复默认
     set_log_level("INFO")
@@ -161,7 +161,9 @@ def test_dump_request_exchange_output():
             "请求接口:     POST /v1beta/models/gemini-3.7-flash:generateContent"
             in output
         )
-        assert "Bearer secre..." in output  # 敏感 Token 适度脱敏
+        assert "[REDACTED]" in output
+        assert "secret1234567890" not in output
+        assert "xyz" not in output
         assert "你好" in output
         assert (
             "-------------------- [响应报文转储: req_test123] --------------------"

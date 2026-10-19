@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import secrets
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,14 +18,14 @@ from aistudio_api.infrastructure.gateway.model_defaults import (
     get_configured_logging_settings,
 )
 from aistudio_api.infrastructure.utils.logger import (
-    dump_request_exchange,
     get_logger,
-    is_dump_requests_enabled,
     setup_logging,
 )
 
 from .dependencies import require_api_key, require_web_auth
+from .diagnostics_middleware import DiagnosticsMiddleware
 from .routes_accounts import router as accounts_router
+from .routes_diagnostics import router as diagnostics_router
 from .routes_gemini import router as gemini_router
 from .routes_models import router as models_router
 from .routes_system import (
@@ -90,6 +88,9 @@ async def lifespan(_app: FastAPI):
                 await client.warmup()
                 return
             except Exception as e:
+                logger.debug(
+                    "浏览器预热第 %d 次失败: %s", attempt + 1, e, exc_info=True
+                )
                 if attempt < 2:
                     await asyncio.sleep(1.0)
                     continue
@@ -109,7 +110,7 @@ async def lifespan(_app: FastAPI):
                     ):
                         await runtime_state.client._session.check_idle_timeout()
                 except Exception:
-                    pass
+                    logger.debug("浏览器空闲检查失败", exc_info=True)
 
         idle_task = asyncio.create_task(_idle_monitor())
 
@@ -132,8 +133,13 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="AI Studio API", lifespan=lifespan)
 app.include_router(system_public_router)
 app.include_router(system_protected_router, dependencies=[Depends(require_web_auth)])
-app.include_router(accounts_router, prefix="/api", dependencies=[Depends(require_web_auth)])
+app.include_router(
+    accounts_router, prefix="/api", dependencies=[Depends(require_web_auth)]
+)
 app.include_router(accounts_router, dependencies=[Depends(require_web_auth)])
+app.include_router(
+    diagnostics_router, prefix="/api", dependencies=[Depends(require_web_auth)]
+)
 app.include_router(gemini_router, dependencies=[Depends(require_api_key)])
 app.include_router(models_router, dependencies=[Depends(require_api_key)])
 app.include_router(userscript_router)
@@ -170,111 +176,6 @@ async def validation_exception_handler(
             }
         },
     )
-
-
-@app.middleware("http")
-async def logging_and_dump_middleware(request, call_next):
-    """统一请求生命周期日志与请求转储 (DEBUG) 中间件。"""
-
-    start_time = time.perf_counter()
-    path = request.url.path
-
-    is_static = path.startswith(("/static", "/assets")) or path in ("/favicon.ico",)
-    dump_enabled = is_dump_requests_enabled() and not is_static
-
-    req_id = ""
-    body_text = None
-    client_str = ""
-    headers_dict = None
-    query_dict = None
-
-    if dump_enabled:
-        req_id = f"req_{secrets.token_hex(4)}"
-        client_str = (
-            f"{request.client.host}:{request.client.port}" if request.client else "unknown"
-        )
-        headers_dict = dict(request.headers)
-        query_dict = dict(request.query_params)
-        try:
-            body_bytes = await request.body()
-            body_text = body_bytes.decode("utf-8", errors="replace")
-        except Exception:
-            body_text = "(failed to read request body)"
-
-    try:
-        response = await call_next(request)
-    except Exception as exc:
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        if dump_enabled:
-            dump_request_exchange(
-                req_id=req_id,
-                method=request.method,
-                url=str(request.url),
-                client=client_str,
-                headers=headers_dict or {},
-                query_params=query_dict or {},
-                body_text=body_text,
-                status_code=500,
-                elapsed_ms=elapsed_ms,
-                response_text=f"Internal Server Error (Exception: {exc})",
-            )
-        else:
-            logger.error(
-                "HTTP %s %s -> 500 (%.1fms, %s)",
-                request.method,
-                path,
-                elapsed_ms,
-                exc,
-            )
-        raise exc
-
-    elapsed_ms = (time.perf_counter() - start_time) * 1000
-    content_type = response.headers.get("content-type", "")
-    is_event_stream = "text/event-stream" in content_type
-
-    if dump_enabled:
-        resp_text = None
-        if is_event_stream:
-            resp_text = "(streaming response in progress)"
-        else:
-            try:
-                # 读取非流式响应体并重构 iterator 以便正常返回给客户端
-                chunks = [chunk async for chunk in response.body_iterator]
-                resp_bytes = b"".join(chunks)
-                resp_text = resp_bytes.decode("utf-8", errors="replace")
-
-                async def _replay_iterator():
-                    for c in chunks:
-                        yield c
-
-                response.body_iterator = _replay_iterator()
-            except Exception:
-                resp_text = "(failed to read response body)"
-
-        dump_request_exchange(
-            req_id=req_id,
-            method=request.method,
-            url=str(request.url),
-            client=client_str,
-            headers=headers_dict or {},
-            query_params=query_dict or {},
-            body_text=body_text,
-            status_code=response.status_code,
-            elapsed_ms=elapsed_ms,
-            response_headers=dict(response.headers),
-            response_text=resp_text,
-            is_stream=is_event_stream,
-        )
-    elif not is_static:
-        logger.info(
-            "HTTP %s %s -> %d (%.1fms)",
-            request.method,
-            path,
-            response.status_code,
-            elapsed_ms,
-        )
-
-    return response
 
 
 # 挂载前端静态资源与 SPA 路由支持
@@ -325,7 +226,9 @@ async def spa_navigation_middleware(request: Request, call_next):
     if is_html_nav and (is_accounts_spa or not is_api) and index_html_path.is_file():
         response = FileResponse(index_html_path)
         response.headers["Vary"] = "Accept"
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
         return response
 
     response = await call_next(request)
@@ -337,7 +240,9 @@ async def spa_navigation_middleware(request: Request, call_next):
                 response.headers["Vary"] = f"{existing_vary}, Accept"
         else:
             response.headers["Vary"] = "Accept"
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
 
     return response
 
@@ -348,9 +253,14 @@ async def root_index():
     if index_html_path.is_file():
         response = FileResponse(index_html_path)
         response.headers["Vary"] = "Accept"
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
         return response
     return JSONResponse({"message": "AI Studio API Web UI"})
+
+
+app.add_middleware(DiagnosticsMiddleware)
 
 
 def main():

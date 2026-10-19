@@ -16,6 +16,16 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from aistudio_api.infrastructure.diagnostics.redaction import (
+    REDACTED,
+    redact_text,
+    redact_url,
+    register_secret,
+    sanitize,
+    sensitive_field,
+)
+from aistudio_api.infrastructure.diagnostics.store import get_store
+
 _UNIFIED_LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
 _UNIFIED_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -40,20 +50,17 @@ class UnifiedFormatter(logging.Formatter):
         self.use_color = use_color
 
     def format(self, record: logging.LogRecord) -> str:
-        orig_levelname = record.levelname
+        rendered = redact_text(super().format(record))
         if self.use_color and record.levelname in _COLORS:
             color = _COLORS[record.levelname]
-            record.levelname = f"{color}{record.levelname}{_RESET}"
-        else:
-            record.levelname = record.levelname
-
-        try:
-            return super().format(record)
-        finally:
-            record.levelname = orig_levelname
+            rendered = rendered.replace(
+                f"[{record.levelname}]", f"[{color}{record.levelname}{_RESET}]", 1
+            )
+        return rendered
 
 
 _root_handler: logging.Handler | None = None
+_diagnostics_handler: logging.Handler | None = None
 _current_level: str = "INFO"
 _dump_requests_override: bool | None = None
 _dump_to_file_override: bool | None = None
@@ -238,22 +245,29 @@ def set_log_level(level: str | int) -> None:
     _current_level = level_name
 
     root = logging.getLogger()
-    root.setLevel(numeric_level)
+    root.setLevel(logging.DEBUG)
 
     aistudio_logger = logging.getLogger("aistudio")
-    aistudio_logger.setLevel(numeric_level)
+    aistudio_logger.setLevel(logging.DEBUG)
 
     # 同步更新已挂载的 handler 级别
     if _root_handler:
         _root_handler.setLevel(numeric_level)
 
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        logging.getLogger(logger_name).setLevel(numeric_level)
+        logging.getLogger(logger_name).setLevel(logging.INFO)
+
+
+class DiagnosticsHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        get_store().text(
+            "log", self.format(record), module=record.name, level=record.levelname
+        )
 
 
 def setup_logging(level: str | int = "INFO") -> None:
     """初始化全局日志系统并统一所有子系统的格式与输出。"""
-    global _root_handler
+    global _root_handler, _diagnostics_handler
     formatter = UnifiedFormatter()
 
     if _root_handler is None:
@@ -265,12 +279,33 @@ def setup_logging(level: str | int = "INFO") -> None:
     else:
         _root_handler.setFormatter(formatter)
 
+    if _diagnostics_handler is None:
+        _diagnostics_handler = DiagnosticsHandler(logging.DEBUG)
+        _diagnostics_handler.setFormatter(UnifiedFormatter(use_color=False))
+    root = logging.getLogger()
+    if _diagnostics_handler not in root.handlers:
+        root.addHandler(_diagnostics_handler)
+    # Third-party protocol debug messages may contain opaque authentication frames.
+    for name in ("httpcore", "httpx", "websockets", "asyncio", "curl_cffi"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    from aistudio_api.config import settings
+
+    register_secret(settings.web_password)
+    if settings.proxy_url:
+        from urllib.parse import urlsplit
+
+        proxy = urlsplit(settings.proxy_url)
+        register_secret(proxy.password)
+    for key in settings.api_keys:
+        register_secret(key)
+
     # 将 uvicorn 的日志器也接入统一格式
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         lgr = logging.getLogger(logger_name)
         lgr.handlers.clear()
         if _root_handler not in lgr.handlers:
             lgr.addHandler(_root_handler)
+        lgr.addHandler(_diagnostics_handler)
         lgr.propagate = False
 
     set_log_level(level)
@@ -287,20 +322,13 @@ def get_logger(name: str = "aistudio") -> logging.Logger:
 
 dump_logger = get_logger("dump")
 
-_SENSITIVE_FIELD_RE = re.compile(
-    r"(?i)(authorization|api[_-]?key|cookie|set-cookie|token|secret|password|auth)"
-)
-
 
 def _mask_sensitive_value(key: str, val: str) -> str:
     if not val:
         return "***"
-    k_lower = key.lower()
-    if "authorization" in k_lower:
-        return val[:12] + "..." if len(val) > 12 else "***"
-    if _SENSITIVE_FIELD_RE.search(k_lower):
-        return val[:6] + "..." if len(val) > 6 else "***"
-    return val
+    return (
+        REDACTED if sensitive_field(key) or key.lower() == "key" else redact_text(val)
+    )
 
 
 def _mask_headers(h: dict[str, str] | None) -> dict[str, str]:
@@ -341,10 +369,10 @@ def dump_request_exchange(
     pretty_body = ""
     if body_text:
         try:
-            parsed = json.loads(body_text)
+            parsed = sanitize(json.loads(body_text))
             pretty_body = json.dumps(parsed, ensure_ascii=False, indent=2)
         except Exception:
-            pretty_body = body_text
+            pretty_body = redact_text(body_text)
         if len(pretty_body) > 4000:
             pretty_body = (
                 pretty_body[:4000] + f"\n... [truncated, total {len(body_text)} chars]"
@@ -357,10 +385,10 @@ def dump_request_exchange(
         pretty_resp = f"(流式传输中，已开始分发，截至首包耗时 {elapsed_ms:.1f}ms)"
     elif response_text:
         try:
-            parsed = json.loads(response_text)
+            parsed = sanitize(json.loads(response_text))
             pretty_resp = json.dumps(parsed, ensure_ascii=False, indent=2)
         except Exception:
-            pretty_resp = response_text
+            pretty_resp = redact_text(response_text)
         if len(pretty_resp) > 4000:
             pretty_resp = (
                 pretty_resp[:4000]
@@ -386,44 +414,52 @@ def dump_request_exchange(
             parsed_body = None
             if body_text:
                 try:
-                    parsed_body = json.loads(body_text)
+                    parsed_body = sanitize(json.loads(body_text))
                 except Exception:
-                    parsed_body = body_text
+                    parsed_body = redact_text(body_text)
 
             parsed_resp = None
             if response_text:
                 try:
-                    parsed_resp = json.loads(response_text)
+                    parsed_resp = sanitize(json.loads(response_text))
                 except Exception:
-                    parsed_resp = response_text
+                    parsed_resp = redact_text(response_text)
 
             record_data = {
                 "req_id": req_id,
                 "timestamp": timestamp,
                 "iso_timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "method": method,
-                "url": url,
+                "url": redact_url(url),
                 "client": client,
-                "headers": headers,
+                "headers": safe_headers,
                 "safe_headers": safe_headers,
-                "query_params": query_params,
+                "query_params": safe_query_params,
                 "safe_query_params": safe_query_params,
                 "body": parsed_body,
-                "raw_body": body_text,
+                "raw_body": str(sanitize(body_text)) if body_text else None,
                 "status_code": status_code,
                 "elapsed_ms": elapsed_ms,
                 "is_stream": is_stream,
-                "response_headers": response_headers if response_headers else {},
+                "response_headers": safe_resp_headers,
                 "safe_response_headers": safe_resp_headers if response_headers else {},
                 "response_body": parsed_resp,
-                "raw_response_body": response_text,
+                "raw_response_body": str(sanitize(response_text))
+                if response_text
+                else None,
             }
 
             serialized = json.dumps(record_data, ensure_ascii=False, indent=2)
-            dump_file_path.write_text(serialized, encoding="utf-8")
+            from aistudio_api.infrastructure.diagnostics.store import open_private
+
+            with open_private(dump_file_path, "x") as stream:
+                stream.write(serialized)
 
             latest_file = dump_folder / "latest_request.json"
-            latest_file.write_text(serialized, encoding="utf-8")
+            if latest_file.exists() and not latest_file.is_symlink():
+                latest_file.unlink()
+            with open_private(latest_file, "x") as stream:
+                stream.write(serialized)
         except Exception as e:
             dump_logger.warning("请求文件转储失败: %s", e)
 
@@ -432,7 +468,7 @@ def dump_request_exchange(
         f"\n==================== [请求报文转储: {req_id}] ====================\n"
         f"记录时间:     {timestamp}\n"
         f"客户端:       {client}\n"
-        f"请求接口:     {method} {url}\n"
+        f"请求接口:     {method} {redact_url(url)}\n"
         f"{file_line}"
         f"查询参数:     {safe_query_params if safe_query_params else '(无)'}\n"
         f"请求头:\n{header_lines}\n"

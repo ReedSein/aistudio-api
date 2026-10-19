@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from aistudio_api.config import settings
+from aistudio_api.infrastructure.diagnostics.process import capture_process_output
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 log = get_logger("browser")
@@ -1042,11 +1043,12 @@ def launch_chromium_process(
     preexec = _setup_child_pdeathsig if platform.system() != "Windows" else None
     proc = subprocess.Popen(
         cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         start_new_session=True,
         preexec_fn=preexec,
     )
+    capture_process_output(proc, "browser")
 
     job = None
     if platform.system() == "Windows":

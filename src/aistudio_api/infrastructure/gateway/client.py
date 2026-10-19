@@ -14,6 +14,12 @@ from aistudio_api.config import (
 )
 from aistudio_api.domain.errors import RequestError, classify_error
 from aistudio_api.domain.models import ModelOutput
+from aistudio_api.infrastructure.diagnostics.redaction import (
+    REDACTED,
+    sanitize,
+    sanitized_json,
+)
+from aistudio_api.infrastructure.diagnostics.store import get_store, open_private
 from aistudio_api.infrastructure.gateway.capture import (
     CapturedRequest,
     RequestCaptureService,
@@ -30,6 +36,7 @@ from aistudio_api.infrastructure.gateway.wire_parser import (
     parse_image_output,
     parse_text_output,
 )
+from aistudio_api.infrastructure.gateway.wire_spec import TopLevelIndex
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -65,10 +72,12 @@ class AIStudioClient:
         self._replay_service = RequestReplayService(session=self._session)
 
         self._streaming_gateway = StreamingGateway(session=self._session)
+
     @property
     def session(self) -> BrowserSession:
         """Expose active browser session facade."""
         return self._session
+
     async def warmup(self) -> None:
         """预热浏览器后端并加载 AI Studio 页面及捕获 BotGuard 服务。"""
         if self._session is not None:
@@ -100,22 +109,26 @@ class AIStudioClient:
         modified_body: str,
         raw_response: str,
     ) -> None:
+        get_store().text("upstream_response_body", raw_response, kind=kind, model=model)
         if not settings.dump_raw_response:
             return
 
         out_dir = Path(settings.dump_raw_response_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         safe_model = model.replace("/", "_")
-        timestamp = __import__("time").strftime("%Y%m%d_%H%M%S")
+        timestamp = str(__import__("time").time_ns())
+        safe_body = json.loads(modified_body)
+        safe_body[TopLevelIndex.SNAPSHOT] = REDACTED
         payload = {
             "kind": kind,
             "model": model,
             "capture_prompt": capture_prompt,
-            "modified_body": json.loads(modified_body),
+            "modified_body": safe_body,
             "raw_response": raw_response,
         }
         path = out_dir / f"aistudio_{kind}_{safe_model}_{timestamp}.json"
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        with open_private(path, "x") as stream:
+            stream.write(sanitized_json(sanitize(payload)))
         logger.info("已落盘原始请求/响应: %s", path)
 
     async def capture_request(

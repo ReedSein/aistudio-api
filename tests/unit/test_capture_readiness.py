@@ -34,7 +34,7 @@ async def test_capture_waits_for_ready_session_before_capture_template():
     session.ensure_ready = AsyncMock(side_effect=fake_ensure_ready)
     session.capture_template = AsyncMock(side_effect=fake_capture_template)
     session.generate_snapshot = AsyncMock(return_value="!snap")
-    session.active_context = MagicMock()
+    session.active_context = MagicMock(context_id=1)
 
     service = RequestCaptureService(session=session)
     captured = await service.capture(prompt="hi", model="models/gemini-3.1-flash-lite")

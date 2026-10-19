@@ -12,4 +12,9 @@ if str(SRC) not in sys.path:
 from aistudio_api.main import main
 
 if __name__ == "__main__":
+    from aistudio_api.infrastructure.diagnostics.process import (
+        install_exception_logging,
+    )
+
+    install_exception_logging("service")
     main()

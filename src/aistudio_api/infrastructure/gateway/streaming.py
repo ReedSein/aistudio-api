@@ -8,6 +8,12 @@ from pathlib import Path
 
 from aistudio_api.config import settings
 from aistudio_api.domain.errors import RequestError, classify_error
+from aistudio_api.infrastructure.diagnostics.redaction import (
+    REDACTED,
+    redact_url,
+    sanitized_json,
+)
+from aistudio_api.infrastructure.diagnostics.store import get_store, open_private
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.stream_parser import (
@@ -17,6 +23,7 @@ from aistudio_api.infrastructure.gateway.wire_parser import (
     parse_chunk_usage,
     parse_response_chunk,
 )
+from aistudio_api.infrastructure.gateway.wire_spec import TopLevelIndex
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("streaming")
@@ -36,17 +43,20 @@ def _dump_stream_exchange(
     out_dir = Path(settings.dump_raw_response_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     safe_model = model.replace("/", "_")
-    timestamp = __import__("time").strftime("%Y%m%d_%H%M%S")
+    timestamp = str(__import__("time").time_ns())
+    safe_body = json.loads(modified_body)
+    safe_body[TopLevelIndex.SNAPSHOT] = REDACTED
     payload = {
         "kind": "stream_generate_content",
         "model": model,
-        "url": url,
+        "url": redact_url(url),
         "status_code": status_code,
-        "modified_body": json.loads(modified_body),
+        "modified_body": safe_body,
         "raw_response": raw_response,
     }
     path = out_dir / f"aistudio_stream_generate_content_{safe_model}_{timestamp}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    with open_private(path, "x") as stream:
+        stream.write(sanitized_json(payload))
     logger.info("已落盘流式原始请求/响应: %s", path)
 
 
@@ -96,12 +106,24 @@ class StreamingGateway:
         ):
             if event_type == "status" and payload and not status_code:
                 status_code = int(str(payload))
+                get_store().emit(
+                    "upstream_status",
+                    model=model,
+                    status=status_code,
+                    url=redact_url(captured.url),
+                )
             elif event_type == "chunk" and payload:
                 if isinstance(payload, bytes):
                     text_payload = payload.decode("utf-8", errors="replace")
                 else:
                     text_payload = str(payload)
                 raw_parts.append(text_payload)
+                get_store().text(
+                    "upstream_response_body",
+                    text_payload,
+                    model=model,
+                    kind="stream_generate_content",
+                )
                 for parsed_chunk in parser.feed(text_payload):
                     usage = parse_chunk_usage(parsed_chunk)
                     if usage:
