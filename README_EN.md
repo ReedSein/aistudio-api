@@ -107,12 +107,14 @@ User configuration lives in `~/.config/aistudio-termux/`; existing account and s
 Installations follow `ReedSein/aistudio-api-termux` only. Maintainers evaluate and test changes from the original project before bringing them into this fork.
 
 - [Paths, ports, configuration, updates and recovery](./docs/TERMUX.md)
+- [Client connection guides (SillyTavern / Luker dual-protocol)](./docs/CLIENTS.md)
+- [OpenAI compatibility reference (/v1 parameter matrix and boundaries)](./docs/OPENAI_COMPATIBILITY.md)
 - [Diagnostics, offline export and privacy](./docs/DIAGNOSTICS.md)
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Wire protocol](./docs/WIRE_SPECIFICATION.md)
 - [BotGuard verification](./docs/BOTGUARD_VERIFICATION_CHAIN.md)
 
-The gateway supports Gemini `/v1beta/...`, streaming, multimodal requests, function calling, account rotation, and a web console. The runtime uses pure Python CDP without Node.js, Playwright, or Selenium.
+The gateway supports native Gemini `/v1beta/...` as well as OpenAI-compatible `/v1/chat/completions` and `/v1/models`, streaming, multimodal requests, function calling, account rotation, and a web console. The runtime uses pure Python CDP without Node.js, Playwright, or Selenium.
 
 ## API Usage Examples
 
@@ -167,9 +169,25 @@ curl http://localhost:11451/v1beta/models/gemini-3.7-flash:streamGenerateContent
 ```
 </details>
 
+<details>
+<summary><b>4. OpenAI-Compatible Chat Completions (/v1/chat/completions)</b></summary>
+
+```bash
+curl http://localhost:11451/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.7-flash",
+    "messages": [
+      {"role": "user", "content": "Explain quantum computing in one sentence."}
+    ]
+  }'
+```
+</details>
+
 ---
 
-### Python SDK (google-genai)
+### Python SDK (google-genai / openai)
 
 Using the official `google-genai` Python SDK:
 
@@ -198,6 +216,23 @@ result = client.models.generate_content(
     contents="Write a quicksort implementation in Python.",
 )
 print(result.text)
+```
+
+Or using the `openai` Python SDK against `/v1`:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-api-key",
+    base_url="http://localhost:11451/v1",
+)
+
+completion = client.chat.completions.create(
+    model="gemini-3.7-flash",
+    messages=[{"role": "user", "content": "Write a quicksort implementation in Python."}],
+)
+print(completion.choices[0].message.content)
 ```
 
 ---
@@ -259,9 +294,10 @@ if response.function_calls:
 
 The service includes a built-in static Web Console served at `http://localhost:11451`:
 
-- **Dashboard**: Real-time view of service health, per-model request stats, success rates, and rate-limit cooldown status.
+- **Dashboard**: Real-time view of service health, per-model request stats, success rates, rate-limit cooldown status, and dual-protocol quick API snippets.
 - **Accounts**: Import Cookie credentials (single text or bundle files), auto-probe multiple accounts, switch the active account, or reset rate limits.
-- **Settings**: Online editor for `config.yaml` with instant hot-reloading on save.
+- **Guides**: Embedded step-by-step connection guides for SillyTavern and Luker covering both native Gemini and OpenAI-compatible protocols, with one-click URL copying and troubleshooting ([full guide](./docs/CLIENTS.md)).
+- **Settings**: Online editor for `config.yaml` with instant hot-reloading on save and one-click support diagnostics export.
 - **Access Control**: Enable authentication by setting `AISTUDIO_WEB_PASSWORD`.
 - **Userscript**: Capture Cookies on aistudio.google.com and push them to this service with one tap; multi-account auto-probe import ([guide](./docs/USERSCRIPT.md)).
 

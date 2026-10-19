@@ -23,14 +23,17 @@ flowchart TD
     Client["客户端调用方<br/>(cURL / Python SDK / Web 控制台)"]
 
     subgraph APILayer ["1. API 接入与路由层 (FastAPI)"]
-        RoutesGemini["routes_gemini.py<br/>Gemini v1beta 兼容接口"]
+        RoutesGemini["routes_gemini.py<br/>Gemini v1beta 原生接口"]
+        RoutesOpenAI["routes_openai.py<br/>OpenAI /v1 兼容接口"]
         RoutesModels["routes_models.py<br/>模型发现与能力查询"]
         RoutesAccounts["routes_accounts.py<br/>账号与 Cookie 管理"]
         RoutesSystem["routes_system.py<br/>系统监控与配置热重载"]
     end
 
     subgraph AppLayer ["2. Application 应用服务层"]
-        APISvc["api_service_gemini.py<br/>请求生命周期与流式处理"]
+        GenSvc["generation_service.py<br/>跨协议共享生成生命周期与重试"]
+        APISvc["api_service_gemini.py<br/>Gemini 响应与流式组装"]
+        OpenAISvc["openai_*.py<br/>OpenAI 请求/参数/媒体/工具/响应转换"]
         Orchestrator["account_orchestrator.py<br/>_switch_lock 防雪崩切号编排"]
         ChatSvc["chat_service.py<br/>多模态请求规范化"]
         AccountRotator["account_rotator.py<br/>模型级 Sticky 调度与 429 隔离"]
@@ -93,7 +96,8 @@ flowchart TD
 
 | 文件 | 核心职责 |
 |---|---|
-| `routes_gemini.py` | 对外暴露 `/v1beta/models/{model}:generateContent` 和 `:streamGenerateContent` 端点 |
+| `routes_gemini.py` | 对外暴露 `/v1beta/models/{model}:generateContent` 和 `:streamGenerateContent` 原生端点 |
+| `routes_openai.py` / `openai_errors.py` / `openai_schemas.py` | 对外暴露 `/v1/chat/completions`、`/v1/models`、`/v1/models/{model_id}` 兼容端点及 `/v1` 作用域下的 OpenAI 错误结构 |
 | `routes_models.py` | 动态向上游拉取并缓存可用模型列表（如 `gemini-3.7-flash`、`gemini-3.8-flash` 等） |
 | `routes_accounts.py` | 提供 Cookie 单条/Bundle文件导入、多账号递归探活（`u/0`, `u/1`...）、手动激活与删除接口 |
 | `routes_system.py` | 监控指标查询、在线编辑与热重载 `config.yaml` 规则 |
@@ -103,11 +107,13 @@ flowchart TD
 
 | 文件 | 核心职责 |
 |---|---|
+| `generation_service.py` / `generation_errors.py` | 跨协议共享的生成执行生命周期，统一承载账号就绪、重试与故障转移、流中途不重试不变量、完成信号校验与统计记录 |
 | `chat_service.py` | 将客户端提交的 Gemini 请求转换为内部结构，处理 Base64 媒体、系统提示与工具参数声明 |
+| `openai_request.py` / `openai_parameters.py` / `openai_media.py` / `openai_tools.py` / `openai_response.py` | 将 OpenAI Chat Completions 请求转换为 `GeminiGenerateContentRequest`（含参数降级记录、DNS 绑定的受限公网图片读取、无状态工具签名编码），并将生成结果组装为 OpenAI JSON 或增量 SSE |
 | `account_rotator.py` | 负责多账号的 Sticky 黏性调度，按模型维护 429 限流与 403 鉴权异常隔离状态，每日美西午夜重置 |
 | `account_orchestrator.py` | 提供全局防雪崩互斥锁（`_switch_lock`），在并发 429 与 403 异常时实现安全有序故障转移切号与单账号在位自愈 |
 | `account_service.py` | 账号领域用例（Cookie 保存、批量探活导入、凭据激活）封装，杜绝路由层穿透访问存储私有属性 |
-| `api_service_gemini.py` | 编排请求全生命周期，协调捕获模板、签名、传输重放及 SSE 流式响应 |
+| `api_service_gemini.py` | 基于共享生成服务组装 Gemini 原生非流式响应与 SSE 流式事件 |
 
 ### 2.3 领域模型层 (`src/aistudio_api/domain/`)
 
@@ -237,4 +243,4 @@ sequenceDiagram
 | **macOS (Apple Silicon / Intel)** | 原生宿主运行 | CloakBrowser | 约 250 - 350 MB |
 | **Windows (x64)** | 原生宿主运行 (Job Object 进程管理) | CloakBrowser (x64) | 约 280 - 380 MB |
 | **Docker 容器** | Debian 基础镜像 (amd64 / arm64) | 容器内置 CloakBrowser (`/opt/cloakbrowser/chrome`) | 约 250 - 350 MB |
-> 依赖管理使用 `uv`。由于 PyPI 官方未提供 Android 预编译 wheel，而 Termux 的 TUR 源缺少桌面端 wheel，因此 `uv.lock` 不纳入版本控制：桌面端直接从 PyPI 安装对应 wheel；Termux 环境通过本地 `uv.toml` 使用 TUR 源，避免不同平台的 wheel 源锁定冲突。
+> 依赖管理使用 `uv`，`uv.lock` 纳入版本控制以保证可复现安装：安装与更新按锁文件同步依赖；Termux 环境结合平台环境准备与本地源配置安装对应 wheel。

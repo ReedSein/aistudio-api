@@ -1,6 +1,6 @@
 # 日志采集与诊断包
 
-主服务、浏览器及 Termux 管理、安装、更新、清理和卸载过程默认记录排错日志。生成接口的请求与回复原文一并保存，包括原生思考部件、工具调用、工具结果与 thoughtSignature。静默启动只隐藏终端输出，仍保存诊断记录。
+主服务、浏览器及 Termux 管理、安装、更新、清理和卸载过程默认记录排错日志。原生 Gemini（`/v1beta/...`）与 OpenAI 兼容（`/v1/chat/completions`）生成接口的请求与回复原文一并保存，包括原生思考部件、工具调用、工具结果、`thoughtSignature` 以及 OpenAI 参数转换与忽略决策（`openai_compatibility`）。静默启动只隐藏终端输出，仍保存诊断记录。
 
 ## 导出并反馈问题
 
@@ -39,7 +39,7 @@ bash scripts/export-diagnostics.sh --output "$HOME/aistudio-startup-problem.tar.
 | 来源 | 记录内容 |
 |---|---|
 | HTTP 请求 | 请求编号、时间、方法、脱敏地址和请求头、状态、耗时、结束原因 |
-| 生成请求 | 完整请求正文、实际上游请求结构；BotGuard 票据脱敏 |
+| 生成请求 | `/v1beta/...` 与 `/v1/chat/completions` 的完整请求正文、实际上游请求结构、OpenAI 参数转换与忽略记录（`openai_compatibility`）；BotGuard 票据脱敏 |
 | 回复 | 非流式回复全文；流式分段、分段顺序、首包与总耗时、字节数和完成状态 |
 | 应用运行 | 模块、进程、重试、浏览器就绪、账号/上下文切换与完整异常栈 |
 | 浏览器 | 启动包装脚本、proot 和浏览器的标准输出、错误输出 |

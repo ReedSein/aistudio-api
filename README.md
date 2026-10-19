@@ -112,12 +112,14 @@ aistudio
 使用端只跟随 `ReedSein/aistudio-api-termux`；原作者的改动由维护者评估、测试后再吸收。
 
 - [安装路径、端口、配置、更新及恢复](./docs/TERMUX.md)
+- [客户端接入指南（SillyTavern / Luker 双协议）](./docs/CLIENTS.md)
+- [OpenAI 兼容接口说明（/v1 参数矩阵与边界）](./docs/OPENAI_COMPATIBILITY.md)
 - [日志采集、诊断包与隐私范围](./docs/DIAGNOSTICS.md)
 - [系统架构](./docs/ARCHITECTURE.md)
 - [Wire 协议](./docs/WIRE_SPECIFICATION.md)
 - [BotGuard 验证链](./docs/BOTGUARD_VERIFICATION_CHAIN.md)
 
-支持 Gemini `/v1beta/...`、流式输出、多模态、工具调用、多账号轮换及 Web 管理控制台。运行时使用纯 Python CDP，不需要 Node.js、Playwright 或 Selenium。
+支持原生 Gemini `/v1beta/...` 与 OpenAI 兼容 `/v1/chat/completions`、`/v1/models`、流式输出、多模态、工具调用、多账号轮换及 Web 管理控制台。运行时使用纯 Python CDP，不需要 Node.js、Playwright 或 Selenium。
 
 ## API 调用示例
 
@@ -172,9 +174,25 @@ curl http://localhost:11451/v1beta/models/gemini-3.7-flash:streamGenerateContent
 ```
 </details>
 
+<details>
+<summary><b>4. OpenAI 兼容接口 (/v1/chat/completions)</b></summary>
+
+```bash
+curl http://localhost:11451/v1/chat/completions \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.7-flash",
+    "messages": [
+      {"role": "user", "content": "用简短的一句话介绍量子计算。"}
+    ]
+  }'
+```
+</details>
+
 ---
 
-### Python SDK (google-genai)
+### Python SDK (google-genai / openai)
 
 使用 Google 官方 `google-genai` SDK 直连本代理服务：
 
@@ -203,6 +221,23 @@ result = client.models.generate_content(
     contents="用 Python 写一个快速排序算法。",
 )
 print(result.text)
+```
+
+或使用 `openai` Python SDK 连接 `/v1` 兼容入口：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="your-api-key",
+    base_url="http://localhost:11451/v1",
+)
+
+completion = client.chat.completions.create(
+    model="gemini-3.7-flash",
+    messages=[{"role": "user", "content": "用 Python 写一个快速排序算法。"}],
+)
+print(completion.choices[0].message.content)
 ```
 
 ---
@@ -264,9 +299,10 @@ if response.function_calls:
 
 系统内置静态打包的 Web 前端管理控制台（访问 `http://localhost:11451`）：
 
-- **仪表盘 (Dashboard)**：实时展示服务健康状况、各模型请求量、成功率及 429 冷却指标。
+- **仪表盘 (Dashboard)**：实时展示服务健康状况、各模型请求量、成功率、429 冷却指标与双协议快速调用示例。
 - **账号管理 (Accounts)**：支持 Cookie 单条与凭据包批量导入、自动探测多账号、手动切换当前活跃账号或重置冷却状态。
-- **系统设置 (Settings)**：在线编辑 `config.yaml`（支持配置 profiles 与 models 默认规则），保存后服务端即时热重载。
+- **使用教程 (Guides)**：控制台内嵌酒馆 (SillyTavern) 与 Luker 的原生 Gemini / OpenAI 兼容四条接入路径、地址复制与排错指引（[完整文档](./docs/CLIENTS.md)）。
+- **系统设置 (Settings)**：在线编辑 `config.yaml`（支持配置 profiles 与 models 默认规则），保存后服务端即时热重载，并支持一键导出脱敏诊断包。
 - **访问鉴权**：设置环境变量 `AISTUDIO_WEB_PASSWORD` 后自动开启登录鉴权守卫。
 - **油猴脚本**：在浏览器登录 aistudio.google.com 后一键抓取 Cookie 推送到本服务，自动探活导入多账号（[使用说明](./docs/USERSCRIPT.md)）。
 
