@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from aistudio_api.api.state import RuntimeState
 from aistudio_api.application.account_rotator import AccountRotator
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
@@ -119,3 +121,29 @@ def test_resolve_config_file_never_overwrites_existing(tmp_path, monkeypatch):
 
     assert resolved == target_config
     assert target_config.read_text(encoding="utf-8") == "custom_key: preserved_value\n"
+
+
+@pytest.mark.asyncio
+async def test_ready_budget_runtime_setting_persists_and_updates(tmp_path, monkeypatch):
+    from aistudio_api.api.routes_system import (
+        RuntimeConfigRequest,
+        update_runtime_config,
+    )
+    from aistudio_api.config import settings
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_configured_runtime_settings,
+    )
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("runtime: {}\n")
+    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(config_file))
+    monkeypatch.setattr(
+        settings, "browser_ready_timeout", settings.browser_ready_timeout
+    )
+    result = await update_runtime_config(RuntimeConfigRequest(browser_ready_timeout=90))
+    assert result["browser_ready_timeout"] == 90
+    assert settings.browser_ready_timeout == 90
+    assert get_configured_runtime_settings(config_file)["browser_ready_timeout"] == 90
+    for invalid in (0, 29, 301):
+        with pytest.raises(ValueError):
+            RuntimeConfigRequest(browser_ready_timeout=invalid)

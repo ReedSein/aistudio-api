@@ -14,6 +14,8 @@ from aistudio_api.infrastructure.browser.scripts import (
     INSTALL_HOOKS_JS,
     STOP_GENERATION_JS,
 )
+from aistudio_api.infrastructure.diagnostics.store import get_store
+from aistudio_api.infrastructure.gateway.readiness import preparing
 from aistudio_api.infrastructure.gateway.session_auth import is_login_page_url
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -21,9 +23,24 @@ log = get_logger("session.botguard")
 
 BOTGUARD_BOOTSTRAP_PROMPT = "say '1'"
 
+OPEN_EDITOR_JS = """(() => {
+    if (document.querySelector('textarea')) return;
+    const clickable = Array.from(document.querySelectorAll('button, mat-card, a, [role="button"], [role="tab"]'));
+    for (const term of ['New chat', 'Chat prompt', 'Start building', 'Create prompt', 'Code and Chat', 'Playground']) {
+        const target = clickable.find(el => !el.disabled && (el.innerText || el.textContent || '').includes(term));
+        if (target) { target.click(); return; }
+    }
+})()"""
+
+
+class EditorNotReady(RuntimeError):
+    """The expected AI Studio editor never became usable."""
+
 
 async def install_page_hooks(page: CDPPage) -> str:
     """Install WAA service hooks on page and extract snapshot function key."""
+    if is_login_page_url(page.url):
+        raise SessionExpiredError("Cookie 认证失败，页面处于登录页")
     result = await page.evaluate(INSTALL_HOOKS_JS)
     if result == "already_hooked":
         snap_key = await page.evaluate("() => window.__AISTUDIO__?.snapKey || ''")
@@ -130,22 +147,97 @@ async def click_run_button(page: CDPPage) -> bool:
     return await page.click("button:has(mat-icon)")
 
 
+async def _wait_for_prompt(page: CDPPage, timeout_s: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if is_login_page_url(page.url):
+            raise SessionExpiredError("Cookie 认证失败，等待输入框时返回登录页")
+        if "available-regions" in page.url:
+            raise RuntimeError("Google AI Studio 地区限制")
+        await page.evaluate(DIALOG_CLEANUP_JS)
+        await page.evaluate(OPEN_EDITOR_JS)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            await page.wait_for_selector("textarea", timeout_s=min(1.0, remaining))
+            usable = await page.evaluate(
+                "() => { const el = document.querySelector('textarea'); return !!(el && !el.disabled && !el.readOnly && el.getClientRects().length); }"
+            )
+            if usable is True:
+                return
+            await page.wait_for_timeout(100)
+        except TimeoutError:
+            await page.evaluate(DIALOG_CLEANUP_JS)
+    state = await page.evaluate(
+        "() => ({ready: document.readyState, textareas: document.querySelectorAll('textarea').length, script: !!window.default_MakerSuite})"
+    )
+    fields: dict[str, object] = {}
+    if isinstance(state, dict):
+        if state.get("ready") in ("loading", "interactive", "complete"):
+            fields["page_ready"] = state["ready"]
+        count = state.get("textareas")
+        if (
+            isinstance(count, int)
+            and not isinstance(count, bool)
+            and 0 <= count <= 1000
+        ):
+            fields["textarea_count"] = count
+        fields["script_ready"] = state.get("script") is True
+    get_store().emit("browser_preparation_failed", stage="input", **fields)
+    raise EditorNotReady("textarea not found while capturing BotGuardService")
+
+
 async def bootstrap_botguard_and_template(
     page: CDPPage,
     reload_cookies_cb: Callable[[CDPPage], Awaitable[bool]] | None = None,
     is_proc_alive_cb: Callable[[], bool] | None = None,
     max_wait_seconds: int = 45,
 ) -> tuple[str, dict[str, object]]:
+    started = time.monotonic()
+    async with preparing():
+        for attempt in range(2):
+            try:
+                result = await _bootstrap_attempt(
+                    page, is_proc_alive_cb, max_wait_seconds
+                )
+                get_store().emit(
+                    "browser_preparation_completed",
+                    stage="capture",
+                    elapsed_seconds=round(time.monotonic() - started, 3),
+                )
+                return result
+            except (SessionExpiredError, EditorNotReady) as exc:
+                if (
+                    attempt
+                    or reload_cookies_cb is None
+                    or not await reload_cookies_cb(page)
+                ):
+                    raise
+                get_store().emit(
+                    "browser_preparation_recovery",
+                    stage="login" if isinstance(exc, SessionExpiredError) else "input",
+                )
+    raise RuntimeError("BotGuard login recovery exhausted")
+
+
+async def _bootstrap_attempt(
+    page: CDPPage,
+    is_proc_alive_cb: Callable[[], bool] | None = None,
+    max_wait_seconds: int = 45,
+) -> tuple[str, dict[str, object]]:
     """Execute 'say 1' bootstrap probe to capture BotGuardService and baseline wire template."""
     current_url = getattr(page, "url", "") or ""
     if "available-regions" in current_url:
-        raise RuntimeError("Google AI Studio 地区限制: 访问被重定向至 available-regions")
+        raise RuntimeError(
+            "Google AI Studio 地区限制: 访问被重定向至 available-regions"
+        )
 
+    await _wait_for_prompt(page)
     snap_key = await install_page_hooks(page)
 
     t0 = time.time()
     captured: dict[str, object] = {}
-    original_text: str = ""
 
     def on_req(req: dict[str, object]) -> None:
         url = str(req.get("url") or "")
@@ -159,42 +251,32 @@ async def bootstrap_botguard_and_template(
         captured["body"] = body
 
     unsub = page.on_request(on_req)
-    await page.evaluate(DIALOG_CLEANUP_JS)
-    await page.evaluate(
-        """(() => {
-            const clickable = Array.from(document.querySelectorAll('button, mat-card, a, [role="button"], [role="tab"], .nav-item'));
-            const targets = ['Playground', 'Code and Chat', 'Chat prompt', 'New chat', 'Start building', 'Create prompt'];
-            for (const term of targets) {
-                const target = clickable.find(el => (el.innerText || el.textContent || '').includes(term));
-                if (target) { target.click(); return; }
-            }
-        })()"""
-    )
-    await page.wait_for_timeout(800)
-
     try:
-        try:
-            await page.wait_for_selector("textarea", timeout_s=15.0)
-        except Exception as err:
-            dbg_url = getattr(page, "url", "") or ""
-            if is_login_page_url(dbg_url):
-                log.warning("等待输入框期间检测到登录页重定向: %s，尝试重新注入 Cookie...", dbg_url)
-                if reload_cookies_cb and await reload_cookies_cb(page):
-                    await page.wait_for_selector("textarea", timeout_s=15.0)
-                else:
-                    raise SessionExpiredError(
-                        f"Cookie 认证失效，已被重定向到 Google 登录页: {dbg_url}"
-                    ) from err
-            if "available-regions" in dbg_url:
-                raise RuntimeError("Google AI Studio 地区限制: 访问被重定向至 available-regions") from err
+        return await _capture_probe(
+            page, captured, is_proc_alive_cb, max_wait_seconds, snap_key, t0
+        )
+    finally:
+        unsub()
 
-            dbg_title = await page.title()
-            raise RuntimeError(
-                f"textarea not found while capturing BotGuardService; url={dbg_url}, title={dbg_title}"
-            ) from err
 
+async def _capture_probe(
+    page: CDPPage,
+    captured: dict[str, object],
+    is_proc_alive_cb: Callable[[], bool] | None,
+    max_wait_seconds: int,
+    snap_key: str,
+    t0: float,
+) -> tuple[str, dict[str, object]]:
+    original_text = ""
+    try:
+        await page.evaluate(DIALOG_CLEANUP_JS)
         original_text = str(
-            (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
+            (
+                await page.evaluate(
+                    "() => document.querySelector('textarea')?.value || ''"
+                )
+            )
+            or ""
         )
         await enable_temporary_chat(page)
         await page.fill("textarea", BOTGUARD_BOOTSTRAP_PROMPT)
@@ -202,7 +284,9 @@ async def bootstrap_botguard_and_template(
         await page.evaluate(DIALOG_CLEANUP_JS)
 
         if not await click_run_button(page):
-            raise RuntimeError("failed to trigger run button while capturing BotGuardService")
+            raise RuntimeError(
+                "failed to trigger run button while capturing BotGuardService"
+            )
 
         for i in range(max_wait_seconds):
             if is_proc_alive_cb and not is_proc_alive_cb():
@@ -212,10 +296,13 @@ async def bootstrap_botguard_and_template(
 
             curr_url = getattr(page, "url", "") or ""
             if is_login_page_url(curr_url):
-                log.warning("BotGuard 捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...", curr_url)
-                if reload_cookies_cb and await reload_cookies_cb(page):
-                    break
-                raise SessionExpiredError(f"Cookie 认证失效，已跳转至登录页: {curr_url}")
+                log.warning(
+                    "BotGuard 捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...",
+                    curr_url,
+                )
+                raise SessionExpiredError(
+                    f"Cookie 认证失效，已跳转至登录页: {curr_url}"
+                )
 
             await page.wait_for_timeout(1000)
             if await page.evaluate("() => !!window.__AISTUDIO__?.service"):
@@ -232,7 +319,9 @@ async def bootstrap_botguard_and_template(
                     await page.evaluate(DOM_GC_CLEANUP_JS)
 
                 if not captured:
-                    raise RuntimeError("BotGuard service captured but wire template missing")
+                    raise RuntimeError(
+                        "BotGuard service captured but wire template missing"
+                    )
 
                 log.info(
                     "BotGuard 握手成功并截获模板，耗时 %d 秒 (累计 %.1f 秒)",
@@ -243,6 +332,5 @@ async def bootstrap_botguard_and_template(
 
         raise RuntimeError(f"BotGuardService capture timeout after {max_wait_seconds}s")
     finally:
-        unsub()
         with suppress(Exception):
             await page.fill("textarea", original_text)

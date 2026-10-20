@@ -9,6 +9,10 @@ class AistudioError(Exception):
     pass
 
 
+class PreparationTimeout(TimeoutError):
+    """The request's cumulative browser preparation allowance was consumed."""
+
+
 class AuthError(AistudioError):
     pass
 

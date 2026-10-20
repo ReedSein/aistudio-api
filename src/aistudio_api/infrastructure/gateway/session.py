@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
+from contextvars import Context
 from hashlib import sha256
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from aistudio_api.infrastructure.gateway.botguard_bootstrap import (
     BOTGUARD_BOOTSTRAP_PROMPT,
     bootstrap_botguard_and_template,
 )
+from aistudio_api.infrastructure.gateway.readiness import preparing
 from aistudio_api.infrastructure.gateway.session_auth import (
     bootstrap_google_session,
     derive_profile_dir,
@@ -73,6 +75,8 @@ class BrowserSession:
 
         self._gate = SessionReadinessGate()
         self._transition_lock = asyncio.Lock()
+        self._preparation_task: asyncio.Task[SessionContext] | None = None
+        self._preparation_waiters = 0
         self._snapshot_lock = asyncio.Lock()
         self._transport = XHRStreamTransport()
         self._retiring_contexts: list[SessionContext] = []
@@ -137,15 +141,31 @@ class BrowserSession:
                 ctx.decr_in_flight()
             self._last_activity_time = time.time()
 
-    async def ensure_ready(self, timeout_s: float = 60.0) -> SessionContext:
-        """Wait until session is 100% READY."""
-        if self._gate.is_ready() and self._gate.active_context is not None:
-            return self._gate.active_context
-
-        if self._gate.state == SessionState.UNINITIALIZED:
-            await self.transition_to_account(self._auth_file, force_refresh=False)
-
-        return await self._gate.wait_ready(timeout_s=timeout_s)
+    async def ensure_ready(self, timeout_s: float | None = None) -> SessionContext:
+        """Share preparation without letting one waiter cancel another's work."""
+        async with preparing():
+            if self._gate.is_ready() and self._gate.active_context is not None:
+                return self._gate.active_context
+            task = self._preparation_task
+            if task is None or task.done():
+                task = asyncio.create_task(
+                    self.transition_to_account(self._auth_file),
+                    name="browser_preparation",
+                    context=Context(),
+                )
+                self._preparation_task = task
+            self._preparation_waiters += 1
+            try:
+                async with asyncio.timeout(timeout_s):
+                    return await asyncio.shield(task)
+            finally:
+                self._preparation_waiters -= 1
+                if self._preparation_waiters == 0:
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    if self._preparation_task is task:
+                        self._preparation_task = None
 
     async def ensure_context(self) -> CDPPage:
         """Ensure active verified CDPPage is available, auto-reconnecting if dropped."""
@@ -154,9 +174,12 @@ class BrowserSession:
             if await page.is_alive(timeout_s=1.0):
                 return page
             log.warning("浏览器页面无响应，重新连接...")
-        await self._close_internal()
-        res = await self._ensure_browser_cdp()
-        return res or (await self.ensure_ready()).page
+        await self.recover()
+        return (await self.ensure_ready()).page
+
+    async def recover(self) -> None:
+        """Refresh through the transition lock; callers retain their retry budget."""
+        await self.transition_to_account(self._auth_file, force_refresh=True)
 
     async def is_alive(self, timeout_s: float = 1.5) -> bool:
         if self._proc is not None and not self._proc.is_alive():
@@ -170,7 +193,13 @@ class BrowserSession:
         idle_timeout = getattr(settings, "browser_idle_timeout", 0)
         if idle_timeout <= 0:
             return False
-        if self._in_flight <= 0 and self._proc is not None:
+        async with self._transition_lock:
+            if (
+                self._in_flight > 0
+                or self._proc is None
+                or self.state == SessionState.PREPARING
+            ):
+                return False
             idle_duration = time.time() - self._last_activity_time
             if idle_duration >= idle_timeout:
                 log.info(
@@ -178,7 +207,7 @@ class BrowserSession:
                     idle_duration,
                     idle_timeout,
                 )
-                await self.close()
+                await self._close_internal()
                 return True
         return False
 
@@ -187,6 +216,12 @@ class BrowserSession:
         await self.transition_to_account(auth_file, force_refresh=True)
 
     async def transition_to_account(
+        self, auth_file: str | None, force_refresh: bool = False
+    ) -> SessionContext:
+        async with preparing():
+            return await self._transition_to_account(auth_file, force_refresh)
+
+    async def _transition_to_account(
         self, auth_file: str | None, force_refresh: bool = False
     ) -> SessionContext:
         """Execute atomic session transition to target auth file."""
@@ -199,6 +234,7 @@ class BrowserSession:
             ):
                 return self._gate.active_context
 
+            self._last_activity_time = time.time()
             self._gate.set_preparing()
             old_context = self._gate.active_context
             target_auth_user = get_auth_user_from_meta(auth_file)
@@ -206,10 +242,11 @@ class BrowserSession:
             self._auth_user = target_auth_user
             self._profile_dir = derive_profile_dir(auth_file)
 
+            new_page: CDPPage | None = None
             try:
                 # Real browser mode
                 if self._proc is None or not self._proc.is_alive():
-                    await self._close_internal()
+                    await self._close_internal(reset_gate=False)
                     await self._ensure_browser_cdp()
 
                 assert self._cdp_client is not None
@@ -224,14 +261,29 @@ class BrowserSession:
                 )
 
                 await load_cookies_to_page(new_page, auth_file)
+                recovered = False
+
+                async def _reload_cb(page: CDPPage) -> bool:
+                    nonlocal recovered
+                    if recovered:
+                        return False
+                    recovered = True
+                    if not await load_cookies_to_page(page, auth_file):
+                        return False
+                    await navigate_to_aistudio(
+                        page,
+                        auth_user=target_auth_user,
+                        auth_file=auth_file,
+                        allow_cookie_reload=False,
+                    )
+                    return True
+
                 await navigate_to_aistudio(
                     new_page,
                     auth_user=target_auth_user,
                     auth_file=auth_file,
+                    reload_cookies_cb=_reload_cb,
                 )
-
-                async def _reload_cb(page: CDPPage) -> bool:
-                    return await load_cookies_to_page(page, auth_file)
 
                 snap_key, base_template = await bootstrap_botguard_and_template(
                     new_page,
@@ -272,7 +324,18 @@ class BrowserSession:
                 )
                 return new_context
 
-            except Exception as exc:
+            except BaseException as exc:
+                if new_page is not None and (
+                    old_context is None or new_page is not old_context.page
+                ):
+                    with suppress(Exception):
+                        await new_page.close()
+                    if self._cdp_client is not None:
+                        await self._cdp_client.close_target(new_page.target_id)
+                if isinstance(exc, asyncio.CancelledError):
+                    self._gate.set_failed(RuntimeError("Browser preparation cancelled"))
+                    raise
+                assert isinstance(exc, Exception)
                 self._gate.set_failed(exc)
                 log.error("会话切换失败: %s", exc)
                 raise
@@ -306,7 +369,7 @@ class BrowserSession:
             raise RuntimeError(
                 f"Google AI Studio 地区限制: 访问被重定向至 available-regions ({curr_url})"
             )
-        if force_refresh or not self._gate.is_ready():
+        if force_refresh:
             await self.transition_to_account(
                 self._auth_file, force_refresh=force_refresh
             )
@@ -505,6 +568,7 @@ class BrowserSession:
         if profile_dir:
             Path(profile_dir).mkdir(parents=True, exist_ok=True)
 
+        self._last_activity_time = time.time()
         self._proc = launch_chromium_process(
             port=self.port,
             user_data_dir=profile_dir,
@@ -516,11 +580,16 @@ class BrowserSession:
         return await self._cdp_client.connect_page(block_assets=True)
 
     async def close(self) -> None:
+        task = self._preparation_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         async with self._transition_lock:
             await self._close_internal()
 
-    async def _close_internal(self) -> None:
-        self._gate.reset()
+    async def _close_internal(self, *, reset_gate: bool = True) -> None:
+        if reset_gate:
+            self._gate.reset()
         self._retiring_contexts.clear()
 
         if self._cdp_client is not None:

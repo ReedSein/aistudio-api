@@ -20,6 +20,7 @@ const toast = useToastStore()
 const timeoutStream = ref<number | null>(props.initialConfig.timeout_stream ?? 240)
 const timeoutReplay = ref<number | null>(props.initialConfig.timeout_replay ?? 240)
 const browserIdleTimeout = ref<number | null>(props.initialConfig.browser_idle_timeout ?? 900)
+const browserReadyTimeout = ref<number | null>(props.initialConfig.browser_ready_timeout ?? 120)
 const envOverrides = ref<string[]>(props.initialConfig.env_overrides ?? [])
 const saving = ref(false)
 
@@ -29,6 +30,7 @@ watch(
     timeoutStream.value = cfg.timeout_stream ?? 240
     timeoutReplay.value = cfg.timeout_replay ?? 240
     browserIdleTimeout.value = cfg.browser_idle_timeout ?? 900
+    browserReadyTimeout.value = cfg.browser_ready_timeout ?? 120
     envOverrides.value = cfg.env_overrides ?? []
   },
   { deep: true },
@@ -38,6 +40,7 @@ const ENV_NAMES: Record<string, string> = {
   timeout_stream: 'AISTUDIO_TIMEOUT_STREAM',
   timeout_replay: 'AISTUDIO_TIMEOUT_REPLAY',
   browser_idle_timeout: 'AISTUDIO_BROWSER_IDLE_TIMEOUT',
+  browser_ready_timeout: 'AISTUDIO_BROWSER_READY_TIMEOUT',
 }
 
 const anyEnvOverride = computed(() => envOverrides.value.length > 0)
@@ -61,6 +64,11 @@ function validate(name: string, value: number | null): string | null {
 }
 
 async function handleSave() {
+  if (browserReadyTimeout.value === null || !Number.isInteger(browserReadyTimeout.value)
+    || browserReadyTimeout.value < 30 || browserReadyTimeout.value > 300) {
+    toast.error('浏览器准备上限必须是 30–300 秒的整数')
+    return
+  }
   const fields: Array<[string, number | null]> = [
     ['流式请求静默超时', timeoutStream.value],
     ['非流式请求超时', timeoutReplay.value],
@@ -80,10 +88,12 @@ async function handleSave() {
       timeout_stream: timeoutStream.value,
       timeout_replay: timeoutReplay.value,
       browser_idle_timeout: browserIdleTimeout.value,
+      browser_ready_timeout: browserReadyTimeout.value,
     })
     timeoutStream.value = res.timeout_stream
     timeoutReplay.value = res.timeout_replay
     browserIdleTimeout.value = res.browser_idle_timeout
+    browserReadyTimeout.value = res.browser_ready_timeout
     envOverrides.value = res.env_overrides
     toast.success('运行参数已保存并即时生效')
     emit('saved')
@@ -108,7 +118,7 @@ async function handleSave() {
             运行参数
           </h3>
           <p class="text-[11px] text-gray-400 mt-0.5">
-            单位均为秒；保存后立即生效。填 0 表示不超时 / 不自动回收（仅由客户端断开、上游报错或页面关闭结束）
+            单位均为秒；保存后立即生效。浏览器准备上限为 30–300 秒；其他参数填 0 表示不超时或不自动回收。
           </p>
         </div>
       </div>
@@ -138,6 +148,16 @@ async function handleSave() {
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
+        <ConfigInput
+          :model-value="browserReadyTimeout"
+          type="number"
+          label="浏览器准备上限"
+          :description="envHint('browser_ready_timeout') || '同一次请求的启动和恢复累计等待上限，不计正常生成时间'"
+          placeholder="120"
+          @update:model-value="browserReadyTimeout = toNumber($event)"
+        />
+      </div>
       <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <ConfigInput
           :model-value="timeoutStream"

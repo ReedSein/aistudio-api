@@ -26,6 +26,7 @@ from aistudio_api.application.generation_errors import (
 from aistudio_api.domain.errors import RequestError
 from aistudio_api.domain.models import ModelOutput
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.gateway.readiness import preparation_budget, preparing
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("generation")
@@ -76,7 +77,7 @@ def _exhausted(last_error: Exception | None) -> HTTPException:
     )
 
 
-async def generate_content(
+async def _generate_content(
     model_path: str,
     req: GeminiGenerateContentRequest,
     client: AIStudioClient,
@@ -86,7 +87,8 @@ async def generate_content(
         normalized = None
         try:
             normalized = normalize_gemini_request(req, model_path)
-            await ensure_active_account(attempt, model=model_path)
+            async with preparing():
+                await ensure_active_account(attempt, model=model_path)
             logger.info(
                 "生成请求: model=%s, turns=%d, stream=false, attempt=%d",
                 normalized.model,
@@ -117,7 +119,7 @@ async def generate_content(
     raise _exhausted(last_error) from last_error
 
 
-async def stream_content(
+async def _stream_content(
     model_path: str,
     req: GeminiGenerateContentRequest,
     client: AIStudioClient,
@@ -131,7 +133,8 @@ async def stream_content(
         usage: dict[str, object] | None = None
         try:
             normalized = normalize_gemini_request(req, model_path)
-            await ensure_active_account(attempt, model=model_path)
+            async with preparing():
+                await ensure_active_account(attempt, model=model_path)
             # Internal metadata resets adapter state when an empty attempt retries.
             yield "model", normalized.model
             async with aclosing(
@@ -169,3 +172,23 @@ async def stream_content(
                 continue
             raise
     raise _exhausted(last_error) from last_error
+
+
+async def generate_content(
+    model_path: str,
+    req: GeminiGenerateContentRequest,
+    client: AIStudioClient,
+) -> tuple[NormalizedGeminiRequest, ModelOutput]:
+    with preparation_budget():
+        return await _generate_content(model_path, req, client)
+
+
+async def stream_content(
+    model_path: str,
+    req: GeminiGenerateContentRequest,
+    client: AIStudioClient,
+) -> AsyncGenerator[tuple[str, object], None]:
+    with preparation_budget():
+        async with aclosing(_stream_content(model_path, req, client)) as events:
+            async for event in events:
+                yield event

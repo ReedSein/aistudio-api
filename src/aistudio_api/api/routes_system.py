@@ -238,6 +238,7 @@ async def get_system_config(
         "timeout_stream": settings.timeout_stream,
         "timeout_replay": settings.timeout_replay,
         "browser_idle_timeout": settings.browser_idle_timeout,
+        "browser_ready_timeout": settings.browser_ready_timeout,
         "env_overrides": get_runtime_env_overrides(),
         "yaml_content": yaml_content,
         "log_level": get_log_level(),
@@ -356,6 +357,7 @@ class RuntimeConfigRequest(BaseModel):
     timeout_stream: int | None = Field(default=None, ge=0, le=86400)
     timeout_replay: int | None = Field(default=None, ge=0, le=86400)
     browser_idle_timeout: int | None = Field(default=None, ge=0, le=86400)
+    browser_ready_timeout: int | None = Field(default=None, ge=30, le=300)
 
 
 @protected_router.put("/config/runtime")
@@ -371,8 +373,14 @@ async def update_runtime_config(req: RuntimeConfigRequest) -> dict[str, object]:
         timeout_stream=req.timeout_stream,
         timeout_replay=req.timeout_replay,
         browser_idle_timeout=req.browser_idle_timeout,
+        browser_ready_timeout=req.browser_ready_timeout,
     )
-    for key in ("timeout_stream", "timeout_replay", "browser_idle_timeout"):
+    for key in (
+        "timeout_stream",
+        "timeout_replay",
+        "browser_idle_timeout",
+        "browser_ready_timeout",
+    ):
         value = getattr(req, key)
         if value is not None:
             setattr(settings, key, value)
@@ -388,6 +396,7 @@ async def update_runtime_config(req: RuntimeConfigRequest) -> dict[str, object]:
         "timeout_stream": settings.timeout_stream,
         "timeout_replay": settings.timeout_replay,
         "browser_idle_timeout": settings.browser_idle_timeout,
+        "browser_ready_timeout": settings.browser_ready_timeout,
         "env_overrides": get_runtime_env_overrides(),
     }
 

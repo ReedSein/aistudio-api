@@ -7,6 +7,7 @@ export interface SystemConfig {
   timeout_stream: number
   timeout_replay: number
   browser_idle_timeout: number
+  browser_ready_timeout?: number
   env_overrides?: string[]
   yaml_content: string
   log_level?: string
@@ -34,6 +35,7 @@ export interface UpdateRuntimeConfigRequest {
   timeout_stream?: number | null
   timeout_replay?: number | null
   browser_idle_timeout?: number | null
+  browser_ready_timeout?: number | null
 }
 
 export interface UpdateRuntimeConfigResponse {
@@ -41,6 +43,7 @@ export interface UpdateRuntimeConfigResponse {
   timeout_stream: number
   timeout_replay: number
   browser_idle_timeout: number
+  browser_ready_timeout: number
   env_overrides: string[]
 }
 

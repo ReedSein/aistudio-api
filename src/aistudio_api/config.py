@@ -263,6 +263,7 @@ class Settings:
     api_keys: frozenset[str] = frozenset()
     timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "240"))
     timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "240"))
+    browser_ready_timeout: int = int(os.getenv("AISTUDIO_BROWSER_READY_TIMEOUT", "120"))
     timezone: str = resolve_timezone()
     locale: str = resolve_locale()
     dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in (
@@ -289,6 +290,12 @@ class Settings:
     def auth_enabled(self) -> bool:
         """网页管理端鉴权是否开启。"""
         return bool(self.web_password)
+
+    def __post_init__(self) -> None:
+        if not 30 <= self.browser_ready_timeout <= 300:
+            raise ValueError(
+                "AISTUDIO_BROWSER_READY_TIMEOUT must be between 30 and 300 seconds"
+            )
 
 
 settings = Settings()

@@ -16,6 +16,7 @@ from aistudio_api.application.account_orchestrator import (
 from aistudio_api.domain.errors import (
     AistudioError,
     AuthError,
+    PreparationTimeout,
     RequestError,
     SessionExpiredError,
     UsageLimitExceeded,
@@ -24,9 +25,26 @@ from aistudio_api.domain.errors import (
     parse_upstream_grpc_error,
 )
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.gateway.readiness import preparing
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("generation")
+
+
+async def _switch_account(
+    *,
+    model: str,
+    failed_account_id: str | None,
+    is_auth_error: bool = False,
+    is_session_expired: bool = False,
+) -> bool:
+    async with preparing():
+        return await try_switch_account(
+            model=model,
+            failed_account_id=failed_account_id,
+            is_auth_error=is_auth_error,
+            is_session_expired=is_session_expired,
+        )
 
 
 def clean_upstream_error_message(raw_msg: str) -> str:
@@ -47,7 +65,7 @@ def clean_upstream_error_message(raw_msg: str) -> str:
     return msg or inner
 
 
-async def handle_attempt_exception(
+async def _classify_attempt_exception(
     exc: Exception,
     *,
     attempt: int,
@@ -76,7 +94,7 @@ async def handle_attempt_exception(
     if isinstance(exc, SessionExpiredError):
         logger.warning("账号会话失效，已被重定向到登录页: %s", exc)
         client.clear_templates()
-        if not has_yielded_data and await try_switch_account(
+        if not has_yielded_data and await _switch_account(
             model=target_model,
             failed_account_id=failed_id,
             is_auth_error=True,
@@ -98,7 +116,7 @@ async def handle_attempt_exception(
         logger.warning("账号 403 权限拒绝: %s", exc)
         client.clear_templates()
         record_rotator_event("auth_error", model=target_model)
-        if not has_yielded_data and await try_switch_account(
+        if not has_yielded_data and await _switch_account(
             model=target_model, failed_account_id=failed_id, is_auth_error=True
         ):
             logger.info("切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
@@ -110,7 +128,7 @@ async def handle_attempt_exception(
     if isinstance(exc, UsageLimitExceeded):
         runtime_state.record(target_model, "rate_limited")
         record_rotator_event("rate_limited", model=target_model, scope=exc.scope)
-        if not has_yielded_data and await try_switch_account(
+        if not has_yielded_data and await _switch_account(
             model=target_model, failed_account_id=failed_id
         ):
             logger.info(
@@ -163,15 +181,24 @@ async def handle_attempt_exception(
             exc,
         )
         client.clear_templates()
-        if not has_yielded_data and await try_switch_account(
+        if not has_yielded_data and attempt >= MAX_RETRIES - 1:
+            raise HTTPException(
+                503, detail={"message": str(exc), "type": "service_unavailable"}
+            ) from exc
+        if not has_yielded_data and await _switch_account(
             model=target_model, failed_account_id=failed_id, is_auth_error=False
         ):
             logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
         if attempt < 2 and not has_yielded_data:
             if client._session is not None:
-                await client._session._close_internal()
+                async with preparing():
+                    await client._session.recover()
             return True
+        if not has_yielded_data:
+            raise HTTPException(
+                503, detail={"message": str(exc), "type": "service_unavailable"}
+            ) from exc
     if isinstance(exc, RequestError):
         clean_msg = clean_upstream_error_message(str(exc))
         status_code = exc.status if exc.status > 0 else 500
@@ -202,6 +229,47 @@ async def handle_attempt_exception(
     raise HTTPException(
         500, detail={"message": str(exc), "type": "server_error"}
     ) from exc
+
+
+async def handle_attempt_exception(
+    exc: Exception,
+    *,
+    attempt: int,
+    model_path: str,
+    normalized_model: str | None,
+    client: AIStudioClient,
+    has_yielded_data: bool = False,
+) -> bool:
+    """Keep transient recovery failures inside the caller's bounded attempt loop."""
+    try:
+        if isinstance(exc, PreparationTimeout):
+            raise exc
+        return await _classify_attempt_exception(
+            exc,
+            attempt=attempt,
+            model_path=model_path,
+            normalized_model=normalized_model,
+            client=client,
+            has_yielded_data=has_yielded_data,
+        )
+    except PreparationTimeout as timeout:
+        raise HTTPException(
+            503, detail={"message": str(timeout), "type": "service_unavailable"}
+        ) from timeout
+    except (RuntimeError, TimeoutError) as recovery_error:
+        if (
+            not has_yielded_data
+            and attempt < MAX_RETRIES - 1
+            and is_browser_session_hang_error(recovery_error)
+        ):
+            logger.warning(
+                "会话恢复失败，计入当前尝试 (%d/%d): %s",
+                attempt + 1,
+                MAX_RETRIES,
+                recovery_error,
+            )
+            return True
+        raise
 
 
 def rate_limit_message(

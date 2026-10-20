@@ -215,9 +215,7 @@ async def verify_account_identity(page: CDPPage, auth_file: str | None) -> bool:
         not is_verified
         and auth_user != "0"
         and f"/u/{auth_user}/" in curr_url
-        and (
-            not discovered_email or discovered_email.strip().lower() == expected_email
-        )
+        and (not discovered_email or discovered_email.strip().lower() == expected_email)
     ):
         is_verified = True
 
@@ -279,6 +277,9 @@ async def navigate_to_aistudio(
     auth_file: str | None = None,
     verify_identity_cb: Callable[[CDPPage], Awaitable[bool]] | None = None,
     save_cookies_cb: Callable[..., Awaitable[None]] | None = None,
+    *,
+    reload_cookies_cb: Callable[[CDPPage], Awaitable[bool]] | None = None,
+    allow_cookie_reload: bool = True,
 ) -> None:
     """Navigate page to AI Studio with region and session-expiration checks."""
     last_exc = None
@@ -334,7 +335,25 @@ async def navigate_to_aistudio(
                     "访问 AI Studio 后检测到重定向至登录页: %s，尝试重新注入 Cookie...",
                     current_url,
                 )
-                if await load_cookies_to_page(page, auth_file):
+                if (
+                    allow_cookie_reload
+                    and reload_cookies_cb is not None
+                    and await reload_cookies_cb(page)
+                ):
+                    return
+                if (
+                    allow_cookie_reload
+                    and reload_cookies_cb is None
+                    and await load_cookies_to_page(page, auth_file)
+                ):
+                    await navigate_to_aistudio(
+                        page,
+                        auth_user,
+                        auth_file,
+                        verify_identity_cb,
+                        save_cookies_cb,
+                        allow_cookie_reload=False,
+                    )
                     return
                 raise SessionExpiredError(
                     f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
@@ -345,6 +364,9 @@ async def navigate_to_aistudio(
                     if await page.evaluate("() => !!window.default_MakerSuite"):
                         break
                 await page.wait_for_timeout(500)
+
+            if is_login_page_url(page.url):
+                raise SessionExpiredError("Cookie 认证失败，等待页面就绪时返回登录页")
 
             if verify_identity_cb is not None:
                 is_verified = await verify_identity_cb(page)
@@ -358,7 +380,11 @@ async def navigate_to_aistudio(
                     await save_browser_cookies(page, auth_file)
             return
         except Exception as exc:
-            if "地区限制" in str(exc) or "Cookie 认证失败" in str(exc):
+            if (
+                isinstance(exc, SessionExpiredError)
+                or "地区限制" in str(exc)
+                or "Cookie 认证失败" in str(exc)
+            ):
                 raise exc
             log.debug("访问 %s 失败: %s", url, exc)
             last_exc = exc

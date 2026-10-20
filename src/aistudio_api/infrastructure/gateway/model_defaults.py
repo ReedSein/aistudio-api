@@ -528,6 +528,7 @@ RUNTIME_TIMEOUT_KEYS: tuple[tuple[str, str], ...] = (
     ("timeout_stream", "AISTUDIO_TIMEOUT_STREAM"),
     ("timeout_replay", "AISTUDIO_TIMEOUT_REPLAY"),
     ("browser_idle_timeout", "AISTUDIO_BROWSER_IDLE_TIMEOUT"),
+    ("browser_ready_timeout", "AISTUDIO_BROWSER_READY_TIMEOUT"),
 )
 
 
@@ -563,6 +564,8 @@ def get_configured_runtime_settings(
                 ) from exc
             if number < 0:
                 raise ValueError(f"runtime.{key} 必须是非负数字，当前值: {value!r}")
+            if key == "browser_ready_timeout" and not 30 <= number <= 300:
+                raise ValueError("runtime.browser_ready_timeout 必须在 30–300 秒之间")
             configured[key] = number
     return configured
 
@@ -582,6 +585,7 @@ def update_configured_runtime_settings(
     timeout_stream: int | None = None,
     timeout_replay: int | None = None,
     browser_idle_timeout: int | None = None,
+    browser_ready_timeout: int | None = None,
     config_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, int]:
     """更新 config.yaml 中的 runtime 设置并刷新缓存。"""
@@ -601,6 +605,10 @@ def update_configured_runtime_settings(
         runtime_dict["timeout_replay"] = timeout_replay
     if browser_idle_timeout is not None:
         runtime_dict["browser_idle_timeout"] = browser_idle_timeout
+    if browser_ready_timeout is not None:
+        if not 30 <= browser_ready_timeout <= 300:
+            raise ValueError("runtime.browser_ready_timeout 必须在 30–300 秒之间")
+        runtime_dict["browser_ready_timeout"] = browser_ready_timeout
 
     parsed["runtime"] = runtime_dict
     resolved_path.write_text(

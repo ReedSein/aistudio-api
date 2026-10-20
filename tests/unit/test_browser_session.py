@@ -192,14 +192,24 @@ async def test_browser_session_liveness_and_auto_reconnect():
             base_template=dict(DEFAULT_BOOTSTRAP_TEMPLATE),
         )
     )
-    session._close_internal = AsyncMock()
-    session._ensure_browser_cdp = AsyncMock(return_value=mock_alive_page)
 
-    # ensure_context should detect dead page, close it, and reconnect to new page
+    async def recover():
+        session.set_ready_context(
+            SessionContext(
+                page=mock_alive_page,
+                snap_key="recovered_key",
+                auth_user="0",
+                auth_file=None,
+                base_template=dict(DEFAULT_BOOTSTRAP_TEMPLATE),
+            )
+        )
+
+    session.recover = AsyncMock(side_effect=recover)
+
     page = await session.ensure_context()
     assert page == mock_alive_page
-    session._close_internal.assert_called_once()
-    session._ensure_browser_cdp.assert_called_once()
+    assert session.is_ready
+    session.recover.assert_awaited_once()
 
 
 @pytest.mark.asyncio
