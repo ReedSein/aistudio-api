@@ -13,7 +13,7 @@ from google.genai import errors, types
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.domain.errors import UsageLimitExceeded
-from aistudio_api.domain.models import Candidate, ModelOutput
+from aistudio_api.domain.models import Candidate, FunctionCall, ModelOutput, OutputPart
 
 
 @pytest.fixture
@@ -26,7 +26,11 @@ async def test_genai_sdk_aio_non_streaming(mock_client: MagicMock) -> None:
     """Test async non-streaming generation with official Google GenAI SDK."""
     mock_client.generate_content = AsyncMock(
         return_value=ModelOutput(
-            candidates=[Candidate(finish_reason=1, text="Hello from AI Studio!")],
+            candidates=[
+                Candidate(
+                    finish_reason=1, parts=[OutputPart(text="Hello from AI Studio!")]
+                )
+            ],
             usage={
                 "prompt_tokens": 10,
                 "completion_tokens": 20,
@@ -77,9 +81,12 @@ async def test_genai_sdk_aio_streaming(mock_client: MagicMock) -> None:
     async def fake_stream(
         *_args: object, **_kwargs: object
     ) -> AsyncGenerator[tuple[str, object], None]:
-        yield ("thinking", "Thinking about the greeting...")
-        yield ("body", "Hello ")
-        yield ("body", "World!")
+        yield (
+            "parts",
+            [OutputPart(text="Thinking about the greeting...", thought=True)],
+        )
+        yield ("parts", [OutputPart(text="Hello ")])
+        yield ("parts", [OutputPart(text="World!")])
         yield (
             "usage",
             {
@@ -164,12 +171,13 @@ async def test_genai_sdk_function_calling_and_response_flow(
                 candidates=[
                     Candidate(
                         finish_reason=1,
-                        text="",
-                        function_calls=[
-                            {
-                                "name": "get_current_weather",
-                                "args": {"location": "San Francisco"},
-                            }
+                        parts=[
+                            OutputPart(
+                                function_call=FunctionCall(
+                                    name="get_current_weather",
+                                    args={"location": "San Francisco"},
+                                )
+                            )
                         ],
                     )
                 ],
@@ -179,7 +187,11 @@ async def test_genai_sdk_function_calling_and_response_flow(
             candidates=[
                 Candidate(
                     finish_reason=1,
-                    text="The current weather in San Francisco is sunny and 18°C.",
+                    parts=[
+                        OutputPart(
+                            text="The current weather in San Francisco is sunny and 18°C."
+                        )
+                    ],
                 )
             ],
             usage={"prompt_tokens": 25, "completion_tokens": 15, "total_tokens": 40},
@@ -287,7 +299,7 @@ async def test_genai_sdk_tool_config_forwarding(mock_client: MagicMock) -> None:
     """Verify google-genai SDK tool_config (mode=ANY) is parsed and forwarded."""
     mock_client.generate_content = AsyncMock(
         return_value=ModelOutput(
-            candidates=[Candidate(finish_reason=1, text="Called")],
+            candidates=[Candidate(finish_reason=1, parts=[OutputPart(text="Called")])],
             usage={"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
         )
     )

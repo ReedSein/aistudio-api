@@ -19,6 +19,8 @@ router = APIRouter()
 @router.post(
     "/v1beta/{model_path:path}:generateContent",
     response_model=GeminiGenerateContentResponse,
+    # Like the official API, unset fields are omitted rather than sent as null.
+    response_model_exclude_none=True,
 )
 async def generate_content(
     model_path: str,

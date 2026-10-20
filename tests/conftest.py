@@ -14,8 +14,6 @@ model_defaults:
         contains:
           - image
       is_image_model: true
-      default_tools:
-        - google_search_and_image_search
       generation_config_defaults:
         response_mime_type: null
         image_output_mode: image_only
@@ -31,8 +29,6 @@ model_defaults:
       match:
         prefixes:
           - gemma-
-      default_tools:
-        - google_search
       safety_settings:
         Harassment: 5
         Hate: 5
@@ -42,8 +38,6 @@ model_defaults:
       match:
         prefixes:
           - gemini-
-      default_tools:
-        - google_search
       safety_settings:
         Harassment: 5
         Hate: 5

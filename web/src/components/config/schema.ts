@@ -14,7 +14,7 @@ export interface FieldOption {
 export interface FieldDefinition {
   key: string
   title: string
-  category: 'profiles' | 'match' | 'tools' | 'generation' | 'safety' | 'overrides' | 'system'
+  category: 'profiles' | 'match' | 'generation' | 'safety' | 'overrides' | 'system'
   type: 'string' | 'number' | 'boolean' | 'select' | 'tags' | 'safety_matrix' | 'indexes'
   description: string
   explanation: string
@@ -24,15 +24,6 @@ export interface FieldDefinition {
   suggestions?: { label: string; value: string | number; description?: string }[]
   tags?: string[]
 }
-
-export const TOOL_SUGGESTIONS = [
-  { label: '网页+图片搜索', value: 'google_search_and_image_search', description: '适用于生图模型 (支持搜索参考图)' },
-  { label: 'Google 网页搜索', value: 'google_search', description: '常规文本问答联网搜索' },
-  { label: '仅图片搜索', value: 'image_search', description: '仅用于图像检索' },
-  { label: '代码执行 (Python)', value: 'code_execution', description: '文本模型 Python 计算与绘图' },
-  { label: 'Google 地图', value: 'google_maps', description: '地理与地图位置检索' },
-  { label: '网页抓取与上下文', value: 'url_context', description: '提取 URL 内容上下文' },
-]
 
 export const IMAGE_MODE_OPTIONS = [
   { value: 'image_only', label: '仅输出图片 (image_only)', description: '推荐：适合第三方画图客户端' },
@@ -126,24 +117,6 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     explanation: '支持前缀匹配、关键词包含与全称精确匹配。',
     defaultValue: {},
     tags: ['匹配规则'],
-  },
-  'profile.default_tools': {
-    key: 'profile.default_tools',
-    title: '默认内置工具',
-    category: 'tools',
-    type: 'tags',
-    description: '客户端调用未显式传 tools 参数时，系统默认自动挂载的 Google 内置工具。',
-    explanation: 'Google AI Studio 原生支持搜索、代码执行等内置工具。注意生图模型仅支持 google_search_and_image_search / google_search / image_search。',
-    defaultValue: ['google_search'],
-    suggestions: [
-      { label: '网页+图片搜索', value: 'google_search_and_image_search', description: '生图模型推荐 (支持搜索参考图)' },
-      { label: 'Google 网页搜索', value: 'google_search', description: '常规文本问答联网搜索' },
-      { label: '仅图片搜索', value: 'image_search', description: '仅用于图像检索' },
-      { label: '代码执行 (Python)', value: 'code_execution', description: '文本模型 Python 计算与绘图' },
-      { label: 'Google 地图', value: 'google_maps', description: '地理位置与地图检索' },
-      { label: '网页抓取', value: 'url_context', description: '提取 URL 内容上下文' },
-    ],
-    tags: ['工具能力', '联网搜索'],
   },
   'generation.image_output_mode': {
     key: 'generation.image_output_mode',
@@ -274,7 +247,6 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
 export const SCHEMA_CATEGORIES = [
   { key: 'profiles', label: '模型分组规则' },
   { key: 'match', label: '模型名称匹配' },
-  { key: 'tools', label: '内置工具配置' },
   { key: 'generation', label: '生成与思考参数' },
   { key: 'safety', label: '安全拦截等级' },
 ]

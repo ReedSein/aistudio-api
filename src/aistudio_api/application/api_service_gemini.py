@@ -11,8 +11,13 @@ from aistudio_api.api.response_models import (
     GeminiCandidateResponse,
     GeminiContentResponse,
     GeminiGenerateContentResponse,
+    GeminiPartResponse,
 )
-from aistudio_api.api.responses import to_gemini_parts, to_gemini_usage_metadata
+from aistudio_api.api.responses import (
+    to_gemini_part,
+    to_gemini_parts,
+    to_gemini_usage_metadata,
+)
 from aistudio_api.api.schemas import GeminiGenerateContentRequest
 from aistudio_api.application.generation_errors import (
     classify_gemini_error_payload as classify_gemini_error_payload,
@@ -20,6 +25,7 @@ from aistudio_api.application.generation_errors import (
     handle_attempt_exception as handle_attempt_exception,
 )
 from aistudio_api.application.generation_service import generate_content, stream_content
+from aistudio_api.domain.models import OutputPart
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
 WIRE_TO_GEMINI_FINISH_REASON: dict[int, str] = {
@@ -66,15 +72,9 @@ async def handle_gemini_generate_content(
         candidates=[
             GeminiCandidateResponse(
                 content=GeminiContentResponse(
-                    parts=to_gemini_parts(
-                        output.text,
-                        function_calls=output.function_calls,
-                        function_responses=output.function_responses,
-                        thinking=output.thinking,
-                        images=output.images,
-                        reasoning_images=output.reasoning_images,
-                        thought_signature=output.thought_signature,
-                    )
+                    # An empty candidate still carries one part for clients
+                    # that index parts[0].
+                    parts=to_gemini_parts(output.parts) or [GeminiPartResponse(text="")]
                 ),
                 finishReason=to_gemini_finish_reason(
                     output.candidates[0].finish_reason if output.candidates else None
@@ -90,44 +90,19 @@ async def handle_gemini_generate_content(
 
 def format_sse_event(
     event_type: str,
-    text: object,
+    value: object,
     *,
     model_version: str | None = None,
     response_id: str | None = None,
 ) -> str | None:
-    """Format a single Gemini streaming event into SSE chunk string."""
-    if not text:
+    """Format one upstream chunk's parts as a Gemini SSE chunk."""
+    if event_type != "parts" or not isinstance(value, list) or not value:
         return None
-
-    parts: list[dict[str, object]] = []
-    if event_type == "body":
-        parts.append({"text": str(text)})
-    elif event_type == "thinking":
-        parts.append({"text": str(text), "thought": True})
-    elif event_type == "thought_signature":
-        # 上游以独立部件单独下发「空文本 + 签名」，原样转发以便调用方回传
-        parts.append({"text": "", "thoughtSignature": str(text)})
-    elif event_type == "tool_calls":
-        fc_list = text if isinstance(text, list) else []
-        parts = [
-            part.model_dump(mode="json", exclude_none=True)
-            for part in to_gemini_parts("", function_calls=fc_list)
-        ]
-    elif event_type == "images":
-        img_list = text if isinstance(text, list) else []
-        parts = [
-            part.model_dump(mode="json", exclude_none=True)
-            for part in to_gemini_parts("", images=img_list)
-        ]
-    elif event_type == "reasoning_images":
-        r_img_list = text if isinstance(text, list) else []
-        parts = [
-            part.model_dump(mode="json", exclude_none=True)
-            for part in to_gemini_parts("", reasoning_images=r_img_list)
-        ]
-    else:
-        return None
-
+    parts = [
+        to_gemini_part(part).model_dump(mode="json", exclude_none=True)
+        for part in value
+        if isinstance(part, OutputPart)
+    ]
     payload: dict[str, object] = {
         "candidates": [{"content": {"role": "model", "parts": parts}, "index": 0}]
     }

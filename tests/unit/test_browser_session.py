@@ -252,6 +252,8 @@ async def test_generate_snapshot_hash_complex_tools_and_multimodal():
                     function_call=("get_weather", {"city": "Tokyo"}, "call_123"),
                     thought=True,
                 ),
+                AistudioPart(executable_code=("PYTHON", "print(22)")),
+                AistudioPart(code_execution_result=("OUTCOME_OK", "22")),
             ],
         ),
         AistudioContent(
@@ -269,6 +271,8 @@ async def test_generate_snapshot_hash_complex_tools_and_multimodal():
         "What is the weather in Tokyo?",
         "iVBORw0KGgoAAAANSUhEUg==",
         "",  # function_call maps to ""
+        "",  # executable_code maps to "" like the web client
+        "",  # code_execution_result maps to "" like the web client
         "",  # function_response maps to ""
         "files/sample_data_file",
     ]

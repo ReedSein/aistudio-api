@@ -34,8 +34,9 @@ class PartIndex(IntEnum):
     FUNCTION_CALL = 3
     FUNCTION_RESPONSE = 4
     FILE_DATA = 5
-    EXECUTABLE_CODE = 8
-    CODE_RESULT = 9
+    # Observed on GenerateContent responses: [language, code] / [outcome, output].
+    EXECUTABLE_CODE = 7
+    CODE_RESULT = 8
     THOUGHT_FLAG = 10
     FUNCTION_CALL_ALT = 10
     FUNCTION_RESPONSE_ALT = 11

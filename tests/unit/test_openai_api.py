@@ -17,7 +17,12 @@ from aistudio_api.application.openai_request import to_gemini_request
 from aistudio_api.application.openai_response import completion_stream
 from aistudio_api.config import settings
 from aistudio_api.domain.errors import RequestError
-from aistudio_api.domain.models import Candidate, ModelOutput
+from aistudio_api.domain.models import (
+    Candidate,
+    FunctionCall,
+    ModelOutput,
+    OutputPart,
+)
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
 
@@ -28,7 +33,13 @@ def gateway(monkeypatch):
     client.generate_content = AsyncMock(
         return_value=ModelOutput(
             candidates=[
-                Candidate(text="你好，测试回复。", thinking="简短思考", finish_reason=1)
+                Candidate(
+                    parts=[
+                        OutputPart(text="简短思考", thought=True),
+                        OutputPart(text="你好，测试回复。"),
+                    ],
+                    finish_reason=1,
+                )
             ],
             usage={"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12},
         )
@@ -142,13 +153,13 @@ async def test_luker_minimal_tool_history_retains_native_signature(http, gateway
     gateway.generate_content.return_value = ModelOutput(
         candidates=[
             Candidate(
-                function_calls=[
-                    {
-                        "name": "lookup",
-                        "args": {"city": "杭州"},
-                        "call_id": "native-7",
-                        "thought_signature": "real-upstream-signature",
-                    }
+                parts=[
+                    OutputPart(
+                        function_call=FunctionCall(
+                            name="lookup", args={"city": "杭州"}, id="native-7"
+                        ),
+                        thought_signature="real-upstream-signature",
+                    )
                 ],
                 finish_reason=1,
             )
@@ -175,7 +186,7 @@ async def test_luker_minimal_tool_history_retains_native_signature(http, gateway
     # Custom clients reconstruct only these fields; arbitrary extensions vanish.
     reconstructed = {key: call[key] for key in ("id", "type", "function")}
     gateway.generate_content.return_value = ModelOutput(
-        candidates=[Candidate(text="杭州晴", finish_reason=1)]
+        candidates=[Candidate(parts=[OutputPart(text="杭州晴")], finish_reason=1)]
     )
     second = await http.post(
         "/v1/chat/completions",
@@ -318,9 +329,9 @@ async def test_incremental_sse_usage_and_cancellation(gateway):
 
     async def source(**kwargs):
         try:
-            yield "body", "第一段"
+            yield "parts", [OutputPart(text="第一段")]
             await waiting.wait()
-            yield "body", "第二段"
+            yield "parts", [OutputPart(text="第二段")]
             yield "finish_reason", 1
             yield (
                 "usage",
@@ -354,7 +365,7 @@ async def test_incremental_sse_usage_and_cancellation(gateway):
 
 async def test_sse_partial_failure_is_not_retried_or_marked_done(http, gateway):
     async def source(**kwargs):
-        yield "body", "partial-text"
+        yield "parts", [OutputPart(text="partial-text")]
         raise RequestError(204, "connection interrupted")
 
     gateway.stream_generate_content = MagicMock(side_effect=source)
@@ -375,7 +386,7 @@ async def test_sse_metadata_only_retry_resets_usage_and_finishes(http, gateway):
             yield "response_id", "aborted-id"
             yield "usage", {"total_tokens": 9000}
             raise RequestError(204, "empty upstream")
-        yield "body", "recovered"
+        yield "parts", [OutputPart(text="recovered")]
         yield "finish_reason", 1
         yield "done", None
 
@@ -417,14 +428,15 @@ async def test_full_openai_dialogue_is_captured_with_request_id(
     assert "fixture-never-export" not in json.dumps(rows)
 
 
-@pytest.mark.parametrize("missing", ["finish_reason", "done"])
+@pytest.mark.parametrize("missing", ["finish_reason", "done", "unspecified"])
 async def test_missing_stream_completion_is_an_error_in_both_protocols(
     http, gateway, missing
 ):
     async def source(**kwargs):
-        yield "body", "unfinished"
+        yield "parts", [OutputPart(text="unfinished")]
         if missing != "finish_reason":
-            yield "finish_reason", 1
+            # FINISH_REASON_UNSPECIFIED (0) does not count as finishing.
+            yield "finish_reason", 0 if missing == "unspecified" else 1
         if missing != "done":
             yield "done", None
 
@@ -438,15 +450,60 @@ async def test_missing_stream_completion_is_an_error_in_both_protocols(
     assert '"error"' in native.text and "finishReason" not in native.text
 
 
+async def test_unspecified_finish_reason_is_not_a_success(http, gateway):
+    gateway.generate_content.return_value = ModelOutput(
+        candidates=[Candidate(parts=[], finish_reason=0)]
+    )
+    native = await http.post(
+        "/v1beta/models/gemini-test:generateContent",
+        json={"contents": [{"parts": [{"text": "hi"}]}]},
+    )
+    assert native.status_code == 502
+
+
+async def test_native_response_omits_unset_fields(http, gateway):
+    gateway.generate_content.return_value = ModelOutput(
+        candidates=[
+            Candidate(
+                parts=[
+                    OutputPart(
+                        function_call=FunctionCall(name="lookup", args={}, id="c1"),
+                        thought_signature="SIG",
+                    )
+                ],
+                finish_reason=1,
+            )
+        ]
+    )
+    native = await http.post(
+        "/v1beta/models/gemini-test:generateContent",
+        json={"contents": [{"parts": [{"text": "hi"}]}]},
+    )
+    assert native.status_code == 200
+    assert native.json()["candidates"][0]["content"]["parts"] == [
+        {
+            "functionCall": {"name": "lookup", "args": {}, "id": "c1"},
+            "thoughtSignature": "SIG",
+        }
+    ]
+    assert "null" not in native.text
+
+
 async def test_late_stream_tool_signature_survives_client_reconstruction(http, gateway):
     from aistudio_api.application.openai_tools import decode_call
 
     async def source(**kwargs):
         yield (
-            "tool_calls",
-            [{"name": "lookup", "args": {"x": 1}, "call_id": "native-8"}],
+            "parts",
+            [
+                OutputPart(
+                    function_call=FunctionCall(
+                        name="lookup", args={"x": 1}, id="native-8"
+                    )
+                )
+            ],
         )
-        yield "thought_signature", "late-signature"
+        yield "parts", [OutputPart(text="", thought_signature="late-signature")]
         yield "finish_reason", 1
         yield "done", None
 

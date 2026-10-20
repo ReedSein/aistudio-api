@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import base64
-
 from aistudio_api.api.response_models import (
+    GeminiCodeExecutionResultPayload,
+    GeminiExecutableCodePayload,
     GeminiFunctionCallPayload,
     GeminiFunctionResponsePayload,
     GeminiInlineDataResponse,
     GeminiPartResponse,
     GeminiUsageMetadata,
 )
-from aistudio_api.domain.models import GeneratedImage
+from aistudio_api.domain.models import OutputPart
 
 
 def _coerce_usage_int(value: object) -> int:
@@ -55,84 +55,39 @@ def to_gemini_usage_metadata(
     )
 
 
-def to_gemini_parts(
-    content: str,
-    function_calls: list[dict[str, object]] | None = None,
-    function_responses: list[dict[str, object]] | None = None,
-    thinking: str = "",
-    images: list[GeneratedImage] | None = None,
-    reasoning_images: list[GeneratedImage] | None = None,
-    thought_signature: str = "",
-) -> list[GeminiPartResponse]:
-    parts: list[GeminiPartResponse] = []
-    sig_carried = False
-    if thinking:
-        parts.append(GeminiPartResponse(text=thinking, thought=True))
-    for image in reasoning_images or []:
-        parts.append(
-            GeminiPartResponse(
-                thought=True,
-                thoughtSignature=image.thought_signature or None,
-                inlineData=GeminiInlineDataResponse(
-                    mimeType=image.mime,
-                    data=base64.b64encode(image.data).decode("ascii"),
-                ),
-            )
+def to_gemini_part(part: OutputPart) -> GeminiPartResponse:
+    """Serialize one model output part without reordering or merging."""
+    response = GeminiPartResponse(
+        thought=True if part.thought else None,
+        thoughtSignature=part.thought_signature or None,
+    )
+    if part.inline_data is not None:
+        mime, data = part.inline_data
+        response.inlineData = GeminiInlineDataResponse(mimeType=mime, data=data)
+    elif part.function_call is not None:
+        call = part.function_call
+        response.functionCall = GeminiFunctionCallPayload(
+            name=call.name, args=call.args, id=call.id
         )
-        if image.thought_signature:
-            sig_carried = True
-    if content:
-        parts.append(GeminiPartResponse(text=content))
-    for image in images or []:
-        parts.append(
-            GeminiPartResponse(
-                thoughtSignature=image.thought_signature or None,
-                inlineData=GeminiInlineDataResponse(
-                    mimeType=image.mime,
-                    data=base64.b64encode(image.data).decode("ascii"),
-                ),
-            )
+    elif part.function_response is not None:
+        result = part.function_response
+        response.functionResponse = GeminiFunctionResponsePayload(
+            name=result.name, response=result.response, id=result.id
         )
-        if image.thought_signature:
-            sig_carried = True
-    for function_call in function_calls or []:
-        fc_name = str(function_call.get("name") or "unknown")
-        payload = GeminiFunctionCallPayload(name=fc_name)
-        if "args" in function_call:
-            payload.args = function_call["args"]
-        elif "arguments" in function_call:
-            payload.args = function_call["arguments"]
-        else:
-            raw_val = function_call.get("raw")
-            if isinstance(raw_val, list) and len(raw_val) > 1:
-                payload.args = raw_val[1]
-        if payload.args is None:
-            payload.args = {}
-        fc_id = function_call.get("call_id") or function_call.get("id")
-        if fc_id:
-            payload.id = str(fc_id)
-        sig = str(function_call.get("thought_signature") or "") or None
-        if sig:
-            sig_carried = True
-        parts.append(GeminiPartResponse(functionCall=payload, thoughtSignature=sig))
-    for function_response in function_responses or []:
-        fr_name = str(function_response.get("name") or "unknown")
-        resp_payload = GeminiFunctionResponsePayload(name=fr_name)
-        if "args" in function_response:
-            resp_payload.response = function_response["args"]
-        elif "arguments" in function_response:
-            resp_payload.response = function_response["arguments"]
-        else:
-            raw_val = function_response.get("raw")
-            if isinstance(raw_val, list) and len(raw_val) > 1:
-                resp_payload.response = raw_val[1]
-        fr_id = function_response.get("call_id") or function_response.get("id")
-        if fr_id:
-            resp_payload.id = str(fr_id)
-        parts.append(GeminiPartResponse(functionResponse=resp_payload))
-    if thought_signature and not sig_carried:
-        # 上游把候选级签名作为独立「空文本 + 签名」部件下发，回传时保持同形
-        parts.append(GeminiPartResponse(text="", thoughtSignature=thought_signature))
-    if not parts:
-        parts.append(GeminiPartResponse(text=""))
-    return parts
+    elif part.executable_code is not None:
+        language, code = part.executable_code
+        response.executableCode = GeminiExecutableCodePayload(
+            language=language, code=code
+        )
+    elif part.code_execution_result is not None:
+        outcome, output = part.code_execution_result
+        response.codeExecutionResult = GeminiCodeExecutionResultPayload(
+            outcome=outcome, output=output
+        )
+    else:
+        response.text = part.text or ""
+    return response
+
+
+def to_gemini_parts(parts: list[OutputPart]) -> list[GeminiPartResponse]:
+    return [to_gemini_part(part) for part in parts]

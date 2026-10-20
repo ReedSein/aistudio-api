@@ -42,7 +42,7 @@
 | OpenAI 字段 / 扩展字段 | 转换目标与优先级 | 边界与降级行为 |
 |---|---|---|
 | `model` | 归一化为 `models/<model>` | 必填非空字符串；模型名保持 Gemini 原名，不将 `gpt-*` 伪装映射为固定模型 |
-| `messages` | `contents` + `systemInstruction` | 必填非空数组；支持 `system`、`developer`、`user`、`assistant`、`tool`、`function` 角色，相邻同角色消息自动合并 `parts` |
+| `messages` | `contents` + `systemInstruction` | 必填非空数组；支持 `system`、`developer`、`user`、`assistant`、`tool`、`function` 角色；每条消息对应一条 Gemini 消息，相邻同角色不合并（同一批工具结果除外），角色规则见 §4.1 |
 | `stream` | 非流式 JSON / 流式 SSE | 布尔值，默认 `false` |
 | `stream_options.include_usage` | 流式末尾附加 usage chunk | 为 `true` 时，在 `finish_reason` 帧之后、`data: [DONE]` 之前发送一个 `choices: []` 且含 `usage` 的结算帧 |
 | `temperature` | `generationConfig.temperature` | 合法范围 `[0, 2]`（显式 `0` 保留）；超出范围或非数值时忽略并记录日志 |
@@ -67,7 +67,9 @@
 
 ### 4.1 角色与文本部件
 
-- `system` 与 `developer` 消息合并为 Gemini 的 `systemInstruction`（仅允许文本，包含内嵌二进制媒体时返回 400）。
+- 位于开头、在任何对话消息之前的连续 `system` / `developer` 消息合并为 Gemini 的 `systemInstruction`（仅允许文本，包含内嵌二进制媒体时返回 400）。
+- 对话开始后出现的 `system` / `developer` 消息（例如插在倒数几条位置的作者注释）留在原位，作为一条 `user` 消息发送，正文不加任何标签；Gemini 的对话历史没有 system 角色。它不能插在工具调用与其结果之间（返回 400）。
+- 每条 `user`、`assistant` 消息各自成为一条 Gemini 消息；相邻同角色（如连续两条 `user`）保持独立，不合并、不补空消息。紧跟同一个 `assistant` 工具调用的连续 `tool` 结果合并为一条 `user` 消息，对应 Gemini 并行函数调用的写法。
 - 消息 `content` 支持纯字符串或部件数组（`type` 支持 `text`、`input_text`、`output_text`、`refusal`、`image_url`、`input_image`、`input_audio`、`file`、`input_file`）。
 - 消息携带 `name` 时，会在该消息文本前插入 `[name: "..."]` 标记以保留说话者区分。
 - 消息顶层若包含无法直接转换的 `attachments`、`audio`、`video`、`function_responses` 字段，明确返回 400。

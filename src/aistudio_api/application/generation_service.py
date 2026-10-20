@@ -30,6 +30,9 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("generation")
 
+# Missing, or FINISH_REASON_UNSPECIFIED (0): the upstream never said it finished.
+UNFINISHED_REASONS = (None, 0)
+
 
 def _parameters(req: NormalizedGeminiRequest) -> dict[str, Any]:
     return {
@@ -91,7 +94,10 @@ async def generate_content(
                 attempt + 1,
             )
             output = await client.generate_content(**_parameters(normalized))
-            if not output.candidates or output.candidates[0].finish_reason is None:
+            if (
+                not output.candidates
+                or output.candidates[0].finish_reason in UNFINISHED_REASONS
+            ):
                 raise RequestError(
                     502, "Upstream response ended without a finish reason"
                 )
@@ -136,22 +142,11 @@ async def stream_content(
                 async for kind, value in events:
                     if kind == "done":
                         completed = True
-                    elif kind == "finish_reason" and value is not None:
+                    elif kind == "finish_reason" and value not in UNFINISHED_REASONS:
                         finished = True
                     if kind == "usage":
                         usage = value if isinstance(value, dict) else None
-                    if (
-                        kind
-                        in {
-                            "body",
-                            "thinking",
-                            "thought_signature",
-                            "tool_calls",
-                            "images",
-                            "reasoning_images",
-                        }
-                        and value
-                    ):
+                    if kind == "parts" and value:
                         emitted = True
                     yield kind, value
             if not completed or not finished:

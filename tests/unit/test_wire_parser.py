@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from aistudio_api.domain.errors import RequestError
 from aistudio_api.infrastructure.gateway.wire_parser import (
     _coerce_int,
-    _decode_wire_struct,
     _decode_wire_value,
     _iter_response_chunks,
+    decode_wire_struct,
     parse_chunk_usage,
-    parse_image_output,
     parse_response_chunk,
     parse_response_part,
     parse_text_output,
     parse_usage_metadata,
 )
+from aistudio_api.infrastructure.gateway.wire_types import AistudioPart
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
@@ -40,8 +43,9 @@ def test_decode_wire_value_and_struct():
 
     # Struct pairs
     pairs = [["key1", "val1"], ["key2", "val2"]]
-    decoded = _decode_wire_struct(pairs)
+    decoded = decode_wire_struct(pairs)
     assert decoded == {"key1": "val1", "key2": "val2"}
+
 
 def test_iter_response_chunks():
     assert _iter_response_chunks([]) == []
@@ -78,7 +82,7 @@ def test_parse_usage_metadata():
 
 
 def test_parse_response_part():
-    assert parse_response_part("not_a_list").text == ""
+    assert parse_response_part("not_a_list") is None
 
     # Part with reasoning/thinking flag at index 10
     part_with_thought = [
@@ -95,6 +99,7 @@ def test_parse_response_part():
         True,
     ]
     parsed = parse_response_part(part_with_thought)
+    assert parsed is not None
     assert parsed.text == "thinking text"
     assert parsed.thought is True
 
@@ -115,35 +120,53 @@ def test_parse_response_part():
         1,
     ]
     parsed_variant = parse_response_part(part_variant)
+    assert parsed_variant is not None
     assert parsed_variant.text == "reasoning variant"
     assert parsed_variant.thought is True
 
-    # Part with code execution
-    part_code = [
-        None,
-        "",
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        "print('hello')",
-        "output: hello",
+    # Code execution slots as observed on a live response: the code at index 7
+    # (with its signature), the sandbox output at index 8.
+    code = [None] * 7 + [[1, "print(2 ** 100)"], None, None, None, None, None, None]
+    code += ["SIG-CODE"]
+    parsed_code = parse_response_part(code)
+    assert parsed_code is not None
+    assert parsed_code.executable_code == ("PYTHON", "print(2 ** 100)")
+    assert parsed_code.thought_signature == "SIG-CODE"
+    result = [None] * 8 + [[1, "1267650600228229401496703205376\n"]]
+    parsed_result = parse_response_part(result)
+    assert parsed_result is not None
+    assert parsed_result.code_execution_result == (
+        "OUTCOME_OK",
+        "1267650600228229401496703205376\n",
+    )
+
+    # The request encoder writes the same slots back.
+    assert AistudioPart(executable_code=("PYTHON", "x")).to_wire() == [None] * 7 + [
+        [1, "x"]
     ]
-    parsed_code = parse_response_part(part_code)
-    assert parsed_code.executable_code == "print('hello')"
-    assert parsed_code.code_execution_result == "output: hello"
+    assert AistudioPart(code_execution_result=("OUTCOME_OK", "y")).to_wire() == [
+        None
+    ] * 8 + [[1, "y"]]
 
-    # Guard against content blocks [parts, role] or role string misinterpreted as text part
-    content_block = [[[None, "actual content"]], "model"]
-    parsed_cb = parse_response_part(content_block)
-    assert parsed_cb.text == ""
+    # Content blocks and role tuples are not parts.
+    assert parse_response_part([[[None, "actual content"]], "model"]) is None
+    assert parse_response_part([["nested"], "model"]) is None
+    assert parse_response_part(["user", "user"]) is None
 
-    # Guard against 2-element role tuple
-    role_part = [["nested"], "model"]
-    assert parse_response_part(role_part).text == ""
-    assert parse_response_part(["user", "user"]).text == ""
+
+def test_parse_response_part_rejects_unknown_code_execution_shape():
+    with pytest.raises(RequestError) as exc:
+        parse_response_part([None] * 7 + ["print('hello')"])
+    assert exc.value.status == 502
+
+
+def test_parse_response_part_rejects_unrecognized_part_instead_of_dropping():
+    # A signed part whose payload slot is unknown would lose its signature.
+    with pytest.raises(RequestError) as exc:
+        parse_response_part([None] * 6 + [["unknown"]] + [None] * 7 + ["SIG"])
+    assert exc.value.status == 502
+    # Empty text with only thought flags is still nothing to forward.
+    assert parse_response_part([None, ""] + [None] * 10 + [1]) is None
 
 
 def test_parse_response_chunk_empty():
@@ -157,31 +180,33 @@ def test_parse_text_output_fallback():
     assert output.text == ""
     assert output.candidates == []
 
-    # parse_image_output forwards to parse_text_output
-    img_output = parse_image_output("invalid json")
-    assert img_output.text == ""
 
-
-def test_parse_image_output_keeps_only_final_images_in_images_field():
+def test_parse_text_output_separates_final_and_reasoning_images():
     raw = (FIXTURES / "test_image_output.json").read_text()
-    output = parse_image_output(raw)
+    output = parse_text_output(raw)
 
-    assert len(output.images) == 1
-    assert len(output.reasoning_images) == 1
-    assert output.images[0].mime == "image/jpeg"
-    assert output.reasoning_images[0].mime == "image/jpeg"
-    assert output.images[0].data != output.reasoning_images[0].data
+    candidate = output.candidate
+    assert len(candidate.images) == 1
+    assert len(candidate.reasoning_images) == 1
+    final, reasoning = (
+        candidate.images[0].inline_data,
+        candidate.reasoning_images[0].inline_data,
+    )
+    assert final is not None and reasoning is not None
+    assert final[0] == reasoning[0] == "image/jpeg"
+    assert final[1] != reasoning[1]
     assert output.thinking.startswith("**Envisioning a Kitty Scene**")
 
 
 def test_decode_wire_struct_with_three_element_array():
     from aistudio_api.infrastructure.gateway.wire_parser import (
-        _decode_wire_struct,
+        decode_wire_struct,
     )
 
     raw = [["city", "San Francisco", "extra_field"]]
-    decoded = _decode_wire_struct(raw)
+    decoded = decode_wire_struct(raw)
     assert decoded == {"city": "San Francisco"}
+
 
 def test_decode_wire_value_booleans_and_numbers():
     # Value booleans (JSPB boolean compression 0/1 and explicit bool)
@@ -209,7 +234,7 @@ def test_decode_wire_value_booleans_and_numbers():
 
 def test_decode_wire_list_single_string_preserves_array():
     from aistudio_api.infrastructure.gateway.wire_parser import (
-        _decode_wire_struct,
+        decode_wire_struct,
     )
 
     # Value node containing a single string item inside repeated ListValue
@@ -226,13 +251,13 @@ def test_decode_wire_list_single_string_preserves_array():
             ],
         ]
     ]
-    decoded = _decode_wire_struct(raw)
+    decoded = decode_wire_struct(raw)
     assert decoded == {"items": ["task1"]}
 
 
 def test_decode_wire_list_single_struct_preserves_array():
     from aistudio_api.infrastructure.gateway.wire_parser import (
-        _decode_wire_struct,
+        decode_wire_struct,
     )
 
     # Simulating ask tool: single question struct inside repeated ListValue
@@ -263,7 +288,7 @@ def test_decode_wire_list_single_struct_preserves_array():
             ],
         ]
     ]
-    decoded = _decode_wire_struct(raw)
+    decoded = decode_wire_struct(raw)
     assert decoded == {
         "questions": [
             {
@@ -277,7 +302,7 @@ def test_decode_wire_list_single_struct_preserves_array():
 
 def test_decode_wire_list_empty_list_returns_list_not_dict():
     from aistudio_api.infrastructure.gateway.wire_parser import (
-        _decode_wire_struct,
+        decode_wire_struct,
     )
 
     raw = [
@@ -293,7 +318,7 @@ def test_decode_wire_list_empty_list_returns_list_not_dict():
             ],
         ]
     ]
-    decoded = _decode_wire_struct(raw)
+    decoded = decode_wire_struct(raw)
     assert decoded == {"empty_list": []}
     assert isinstance(decoded["empty_list"], list)
 
@@ -356,10 +381,11 @@ def test_parse_response_chunk_with_ask_tool_payload():
     ]
     candidate = parse_response_chunk(chunk)
     assert len(candidate.function_calls) == 1
-    fc = candidate.function_calls[0]
-    assert fc["name"] == "ask"
-    assert fc["call_id"] == "call_ask_123"
-    args = fc["args"]
+    fc = candidate.function_calls[0].function_call
+    assert fc is not None
+    assert fc.name == "ask"
+    assert fc.id == "call_ask_123"
+    args = fc.args
     assert isinstance(args, dict)
     assert args == {
         "questions": [

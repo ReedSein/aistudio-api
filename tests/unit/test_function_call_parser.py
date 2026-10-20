@@ -1,5 +1,6 @@
 from typing import Any, cast
 
+from aistudio_api.domain.models import FunctionCall, FunctionResponse, OutputPart
 from aistudio_api.infrastructure.gateway.wire_parser import parse_response_chunk
 
 
@@ -33,21 +34,13 @@ def test_parse_response_chunk_keeps_raw_function_call_and_response():
 
     candidate = parse_response_chunk(chunk)
 
-    assert candidate.function_calls == [
-        {
-            "type": "functionCall",
-            "raw": ["getWeather", '{"city":"Shanghai"}'],
-            "name": "getWeather",
-            "args": {"city": "Shanghai"},
-        }
+    assert [part.function_call for part in candidate.function_calls] == [
+        FunctionCall(name="getWeather", args={"city": "Shanghai"})
     ]
     assert candidate.function_responses == [
-        {
-            "type": "functionResponse",
-            "raw": ["getWeather", {"city": "Shanghai", "temperature": "24C"}],
-            "name": "getWeather",
-            "args": {"city": "Shanghai", "temperature": "24C"},
-        }
+        FunctionResponse(
+            name="getWeather", response={"city": "Shanghai", "temperature": "24C"}
+        )
     ]
 
 
@@ -94,54 +87,14 @@ def test_parse_response_chunk_extracts_real_aistudio_function_call_shape():
 
     candidate = parse_response_chunk(chunk)
 
-    assert candidate.function_calls == [
-        {
-            "type": "functionCall",
-            "raw": ["getWeather", [[["city", [None, None, "Shanghai"]]]], "e6ni61kr"],
-            "name": "getWeather",
-            "args": {"city": "Shanghai"},
-            "call_id": "e6ni61kr",
-            "thought_signature": "EiYKJGUyNDgzMGE3LTVjZDYtNDJmZS05OThiLWVlNTM5ZTcyYjljMw==",
-        }
+    assert candidate.parts == [
+        OutputPart(
+            function_call=FunctionCall(
+                name="getWeather", args={"city": "Shanghai"}, id="e6ni61kr"
+            ),
+            thought_signature="EiYKJGUyNDgzMGE3LTVjZDYtNDJmZS05OThiLWVlNTM5ZTcyYjljMw==",
+        )
     ]
-
-
-def test_to_gemini_parts_preserves_thought_signature_and_id():
-    from aistudio_api.api.responses import to_gemini_parts
-
-    fcs = [
-        {
-            "name": "getWeather",
-            "args": {"city": "Tokyo"},
-            "call_id": "call_abc123",
-            "thought_signature": "sig_xyz789",
-        }
-    ]
-    frs = [
-        {
-            "name": "getWeather",
-            "args": {"temperature": "20C"},
-            "call_id": "call_abc123",
-        }
-    ]
-
-    parts = to_gemini_parts("", function_calls=fcs, function_responses=frs)
-    assert len(parts) == 2
-
-    # FunctionCall part
-    fc_part = parts[0]
-    assert fc_part.functionCall is not None
-    assert fc_part.functionCall.name == "getWeather"
-    assert fc_part.functionCall.args == {"city": "Tokyo"}
-    assert fc_part.functionCall.id == "call_abc123"
-    assert fc_part.thoughtSignature == "sig_xyz789"
-
-    # FunctionResponse part
-    fr_part = parts[1]
-    assert fr_part.functionResponse is not None
-    assert fr_part.functionResponse.name == "getWeather"
-    assert fr_part.functionResponse.response == {"temperature": "20C"}
-    assert fr_part.functionResponse.id == "call_abc123"
 
 
 def test_encode_schema_to_wire_case_insensitive_and_aliases():

@@ -194,14 +194,22 @@ def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():
     ]
 
 
-def test_normalize_gemini_request_applies_gemma_default_tools():
+@pytest.mark.parametrize(
+    "model",
+    [
+        "models/gemma-4-31b-it",
+        "models/gemini-3.5-flash",
+        "models/gemini-3.1-flash-image-preview",
+    ],
+)
+def test_normalize_gemini_request_omitted_tools_injects_nothing(model):
     req = GeminiGenerateContentRequest(
         contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
     )
 
-    normalized = normalize_gemini_request(req, "models/gemma-4-31b-it")
+    normalized = normalize_gemini_request(req, model)
 
-    assert normalized.tools == [[None, None, None, [None, [[]]]]]
+    assert normalized.tools is None
 
 
 def test_normalize_gemini_request_encodes_builtin_tools_to_wire():
@@ -792,11 +800,11 @@ def test_normalize_gemini_request_parameters_json_schema_for_omp_tools():
 
 
 def test_unboxed_single_pair_decoding():
-    """Verify _decode_wire_struct handles single unboxed key-value pairs."""
-    from aistudio_api.infrastructure.gateway.wire_parser import _decode_wire_struct
+    """Verify decode_wire_struct handles single unboxed key-value pairs."""
+    from aistudio_api.infrastructure.gateway.wire_parser import decode_wire_struct
 
     unboxed = ["path", [None, None, "test.txt"]]
-    assert _decode_wire_struct(unboxed) == {"path": "test.txt"}
+    assert decode_wire_struct(unboxed) == {"path": "test.txt"}
 
 
 def test_normalize_gemini_request_preserves_system_instruction_thought_signature():
@@ -807,7 +815,10 @@ def test_normalize_gemini_request_preserves_system_instruction_thought_signature
             "systemInstruction": {
                 "role": "user",
                 "parts": [
-                    {"text": "System prompt with thought signature", "thoughtSignature": "sys_sig_123"}
+                    {
+                        "text": "System prompt with thought signature",
+                        "thoughtSignature": "sys_sig_123",
+                    }
                 ],
             },
         }

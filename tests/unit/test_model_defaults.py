@@ -7,7 +7,6 @@ from aistudio_api.infrastructure.gateway.wire_types import AistudioImageOutputMo
 def test_resolve_model_defaults_uses_repo_config_for_gemma():
     defaults = resolve_model_defaults("models/gemma-4-31b-it")
 
-    assert defaults.default_tools == ("google_search",)
     assert defaults.is_image_model is False
     assert defaults.safety_settings == (
         (None, None, 7, 5),
@@ -92,60 +91,8 @@ model_defaults:
     )
 
 
-def test_resolve_model_defaults_supports_image_default_tool_names(tmp_path):
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
-model_defaults:
-  profiles:
-    - name: image_models
-      match:
-        contains: [image]
-      is_image_model: true
-      default_tools:
-        - google_search_and_image_search
-"""
-    )
-
-    defaults = resolve_model_defaults(
-        "models/gemini-3.1-flash-image-preview", config_path=config_path
-    )
-
-    assert defaults.is_image_model is True
-    assert defaults.default_tools == ("google_search_and_image_search",)
-
-
-def test_resolve_model_defaults_keeps_gemini_four_tool_config(tmp_path):
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        """
-model_defaults:
-  profiles:
-    - name: gemini_models
-      match:
-        prefixes: [gemini-]
-      default_tools:
-        - google_search
-        - code_execution
-        - google_maps
-        - url_context
-"""
-    )
-
-    defaults = resolve_model_defaults(
-        "models/gemini-3.5-flash", config_path=config_path
-    )
-
-    assert defaults.default_tools == (
-        "google_search",
-        "code_execution",
-        "google_maps",
-        "url_context",
-    )
-
-
-def test_resolve_model_defaults_model_override_replaces_profile_tools_and_flags(
-    tmp_path,
+def test_resolve_model_defaults_ignores_legacy_default_tools_with_warning(
+    tmp_path, caplog
 ):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -157,11 +104,32 @@ model_defaults:
         prefixes: [gemini-]
       default_tools:
         - google_search
+"""
+    )
+
+    with caplog.at_level("WARNING"):
+        defaults = resolve_model_defaults(
+            "models/gemini-3.5-flash", config_path=config_path
+        )
+
+    assert not hasattr(defaults, "default_tools")
+    assert any("default_tools" in record.getMessage() for record in caplog.records)
+
+
+def test_resolve_model_defaults_model_override_replaces_profile_flags(
+    tmp_path,
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+model_defaults:
+  profiles:
+    - name: gemini_models
+      match:
+        prefixes: [gemini-]
       disable_safety_settings: true
   models:
     gemini-3.5-flash:
-      default_tools:
-        - code_execution
       disable_safety_settings: false
 """
     )
@@ -170,7 +138,6 @@ model_defaults:
         "models/gemini-3.5-flash", config_path=config_path
     )
 
-    assert defaults.default_tools == ("code_execution",)
     assert defaults.disable_safety_settings is False
 
 

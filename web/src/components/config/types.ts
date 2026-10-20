@@ -28,7 +28,6 @@ export interface ModelProfileItem {
   name: string
   match?: MatchRules
   is_image_model?: boolean
-  default_tools?: string[]
   generation_config_defaults?: GenerationConfigDefaults
   clear_generation_config_indexes?: number[]
   disable_safety_settings?: boolean
@@ -38,7 +37,6 @@ export interface ModelProfileItem {
 
 export interface ModelOverrideItem {
   is_image_model?: boolean
-  default_tools?: string[]
   generation_config_defaults?: GenerationConfigDefaults
   clear_generation_config_indexes?: number[]
   disable_safety_settings?: boolean

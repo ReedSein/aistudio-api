@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aistudio_api.api.schemas import GeminiGenerateContentRequest, GeminiTool
+    from aistudio_api.api.schemas import (
+        GeminiGenerateContentRequest,
+        GeminiPart,
+        GeminiTool,
+    )
 
 from dataclasses import dataclass
 
@@ -50,9 +54,6 @@ SCHEMA_TYPE_CODES = {
     "object": 6,
     "null": 7,
 }
-
-
-
 
 
 def _resolve_schema_type_code(schema: dict[str, object]) -> tuple[int, str, bool]:
@@ -451,16 +452,6 @@ def _extract_google_search_tool_names(
     return ["google_search"]
 
 
-def _filter_default_tools_for_model(
-    tool_names: tuple[str, ...], *, is_image_model: bool
-) -> list[str]:
-    names = [str(name).strip() for name in tool_names if str(name).strip()]
-    if not is_image_model:
-        return names
-    allowed = {"google_search", "image_search", "google_search_and_image_search"}
-    return [name for name in names if name in allowed]
-
-
 # 内置搜索工具的覆盖关系：复合工具覆盖其组成部分，去重时据此跳过被覆盖的窄工具。
 _BUILTIN_TOOL_COVERS = {
     "google_search_and_image_search": ("google_search", "image_search"),
@@ -562,92 +553,7 @@ def normalize_gemini_request(
 
     for content in req.contents:
         role = content.role or "user"
-        parts: list[AistudioPart] = []
-        text_parts: list[str] = []
-        content_images: list[str | tuple[str, str]] = []
-
-        for part in content.parts:
-            if part.text is not None:
-                is_thought = bool(part.thought)
-                parts.append(
-                    AistudioPart(
-                        text=part.text,
-                        thought=is_thought,
-                        thought_signature=part.thoughtSignature,
-                    )
-                )
-                text_parts.append(part.text)
-                continue
-            if part.inlineData is not None:
-                img_data = (part.inlineData.mimeType, part.inlineData.data)
-                parts.append(
-                    AistudioPart(
-                        inline_data=img_data,
-                        thought_signature=part.thoughtSignature,
-                    )
-                )
-                content_images.append(img_data)
-                continue
-            if part.functionCall is not None:
-                fc = part.functionCall
-                args_payload = fc.args if fc.args is not None else {}
-                parts.append(
-                    AistudioPart(
-                        function_call=(fc.name, args_payload, fc.id)
-                        if fc.id
-                        else (fc.name, args_payload),
-                        thought_signature=part.thoughtSignature,
-                    )
-                )
-                continue
-            if part.functionResponse is not None:
-                fr = part.functionResponse
-                resp_payload = fr.response if fr.response is not None else {}
-                parts.append(
-                    AistudioPart(
-                        function_response=(fr.name, resp_payload, fr.id)
-                        if fr.id
-                        else (fr.name, resp_payload),
-                    )
-                )
-                if fr.parts:
-                    for subpart in fr.parts:
-                        if subpart.inlineData is not None:
-                            img_data = (
-                                subpart.inlineData.mimeType,
-                                subpart.inlineData.data,
-                            )
-                            parts.append(
-                                AistudioPart(
-                                    inline_data=img_data,
-                                    thought_signature=subpart.thoughtSignature,
-                                )
-                            )
-                            content_images.append(img_data)
-                        elif subpart.text is not None:
-                            parts.append(AistudioPart(text=subpart.text))
-                            text_parts.append(subpart.text)
-                continue
-            if part.executableCode is not None:
-                ec = part.executableCode
-                parts.append(
-                    AistudioPart(
-                        executable_code=(ec.language, ec.code),
-                        thought_signature=part.thoughtSignature,
-                    )
-                )
-                continue
-            if part.codeExecutionResult is not None:
-                cer = part.codeExecutionResult
-                parts.append(
-                    AistudioPart(
-                        code_execution_result=(cer.outcome, cer.output),
-                        thought_signature=part.thoughtSignature,
-                    )
-                )
-                continue
-            if part.fileData is not None:
-                raise ValueError("fileData is not supported yet")
+        parts, text_parts, content_images = _convert_gemini_content_parts(content.parts)
         contents.append(AistudioContent(role=role, parts=parts))
 
         if role == "user":
@@ -718,25 +624,6 @@ def normalize_gemini_request(
                     seen_builtin.update(filtered_builtin)
         if all_function_declarations:
             tools.append([None, all_function_declarations])
-
-    # 仅当客户端未传 tools 时注入 config.yaml 的 default_tools。
-    # 若客户端显式声明了 tools（如自定义函数声明），绝不自动混入 Google Search 等内置工具，
-    # 避免触发 Google MakerSuite "Please enable tool_config.include_server_side_tool_invocations" 400 报错。
-    if req.tools is None and model_defaults.default_tools:
-        default_tool_names = _filter_default_tools_for_model(
-            model_defaults.default_tools,
-            is_image_model=model_defaults.is_image_model,
-        )
-        injected = (
-            build_tools_from_names(
-                default_tool_names,
-                model=model,
-                is_image_model=model_defaults.is_image_model,
-            )
-            if default_tool_names
-            else []
-        )
-        tools = injected if injected else None
 
     raw_tool_config = getattr(req, "toolConfig", None)
     tool_config = _normalize_gemini_tool_config(raw_tool_config)
@@ -851,3 +738,99 @@ def normalize_gemini_request(
         max_tokens=generation_config.maxOutputTokens if generation_config else None,
         generation_config_overrides=generation_config_overrides or None,
     )
+
+
+def _convert_gemini_content_parts(
+    parts_in: list[GeminiPart],
+) -> tuple[list[AistudioPart], list[str], list[str | tuple[str, str]]]:
+    """Convert Gemini-format parts into wire parts.
+
+    Returns the wire parts plus the collected plain texts and images used for
+    browser capture bookkeeping.
+    """
+    parts: list[AistudioPart] = []
+    text_parts: list[str] = []
+    content_images: list[str | tuple[str, str]] = []
+    for part in parts_in:
+        if part.text is not None:
+            is_thought = bool(part.thought)
+            parts.append(
+                AistudioPart(
+                    text=part.text,
+                    thought=is_thought,
+                    thought_signature=part.thoughtSignature,
+                )
+            )
+            text_parts.append(part.text)
+            continue
+        if part.inlineData is not None:
+            img_data = (part.inlineData.mimeType, part.inlineData.data)
+            parts.append(
+                AistudioPart(
+                    inline_data=img_data,
+                    thought_signature=part.thoughtSignature,
+                )
+            )
+            content_images.append(img_data)
+            continue
+        if part.functionCall is not None:
+            fc = part.functionCall
+            args_payload = fc.args if fc.args is not None else {}
+            parts.append(
+                AistudioPart(
+                    function_call=(fc.name, args_payload, fc.id)
+                    if fc.id
+                    else (fc.name, args_payload),
+                    thought_signature=part.thoughtSignature,
+                )
+            )
+            continue
+        if part.functionResponse is not None:
+            fr = part.functionResponse
+            resp_payload = fr.response if fr.response is not None else {}
+            parts.append(
+                AistudioPart(
+                    function_response=(fr.name, resp_payload, fr.id)
+                    if fr.id
+                    else (fr.name, resp_payload),
+                )
+            )
+            if fr.parts:
+                for subpart in fr.parts:
+                    if subpart.inlineData is not None:
+                        img_data = (
+                            subpart.inlineData.mimeType,
+                            subpart.inlineData.data,
+                        )
+                        parts.append(
+                            AistudioPart(
+                                inline_data=img_data,
+                                thought_signature=subpart.thoughtSignature,
+                            )
+                        )
+                        content_images.append(img_data)
+                    elif subpart.text is not None:
+                        parts.append(AistudioPart(text=subpart.text))
+                        text_parts.append(subpart.text)
+            continue
+        if part.executableCode is not None:
+            ec = part.executableCode
+            parts.append(
+                AistudioPart(
+                    executable_code=(ec.language, ec.code),
+                    thought_signature=part.thoughtSignature,
+                )
+            )
+            continue
+        if part.codeExecutionResult is not None:
+            cer = part.codeExecutionResult
+            parts.append(
+                AistudioPart(
+                    code_execution_result=(cer.outcome, cer.output),
+                    thought_signature=part.thoughtSignature,
+                )
+            )
+            continue
+        if part.fileData is not None:
+            raise ValueError("fileData is not supported yet")
+    return parts, text_parts, content_images

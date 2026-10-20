@@ -9,19 +9,21 @@ import uuid
 from typing import Any
 
 from aistudio_api.api.openai_errors import OpenAIInputError
+from aistudio_api.domain.models import OutputPart
 
 PREFIX = "call_gemini_"
 MAX_CALL_ID = 65536
 
 
-def encode_call(call: dict[str, object], signature: str = "") -> dict[str, Any]:
-    name = call.get("name")
-    if not isinstance(name, str) or not name:
-        raise ValueError("Upstream function call has no name")
-    native_id = call.get("call_id") or call.get("id") or ""
-    signature = str(call.get("thought_signature") or signature)
+def encode_call(part: OutputPart, signature: str = "") -> dict[str, Any]:
+    """Encode a function-call part; its own signature wins over ``signature``."""
+    call = part.function_call
+    if call is None:
+        raise ValueError("encode_call needs a function-call part")
+    native_id = call.id or ""
+    signature = part.thought_signature or signature
     payload = json.dumps(
-        [str(native_id), signature, uuid.uuid4().hex], separators=(",", ":")
+        [native_id, signature, uuid.uuid4().hex], separators=(",", ":")
     ).encode()
     call_id = (
         PREFIX + base64.urlsafe_b64encode(payload).decode().rstrip("=")
@@ -30,11 +32,13 @@ def encode_call(call: dict[str, object], signature: str = "") -> dict[str, Any]:
     )
     if len(call_id) > MAX_CALL_ID:
         raise ValueError("Upstream tool signature exceeds the supported call ID size")
-    args = call.get("args", call.get("arguments", {}))
     return {
         "id": call_id,
         "type": "function",
-        "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)},
+        "function": {
+            "name": call.name,
+            "arguments": json.dumps(call.args, ensure_ascii=False),
+        },
         **({"signature": signature} if signature else {}),
     }
 

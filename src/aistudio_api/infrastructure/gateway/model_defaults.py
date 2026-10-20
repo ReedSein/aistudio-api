@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 from aistudio_api.config import resolve_config_file
+from aistudio_api.infrastructure.utils.logger import get_logger
 
 from .wire_types import (
     AistudioImageOutputMode,
@@ -18,6 +19,8 @@ from .wire_types import (
     MediaResolution,
     ThinkingLevel,
 )
+
+logger = get_logger("model_defaults")
 
 _resolve_config_path = resolve_config_file
 _SAFETY_CATEGORY_ORDER = (
@@ -31,7 +34,6 @@ _SAFETY_CATEGORY_ORDER = (
 @dataclass(frozen=True)
 class ModelDefaults:
     is_image_model: bool = False
-    default_tools: tuple[str, ...] = ()
     generation_config_defaults: dict[str, object] = field(default_factory=dict)
     clear_generation_config_indexes: tuple[int, ...] = ()
     safety_settings: tuple[tuple[object, ...], ...] | None = None
@@ -50,9 +52,6 @@ class ModelDefaults:
     def merged(self, other: ModelDefaults) -> ModelDefaults:
         merged_generation = dict(self.generation_config_defaults)
         merged_generation.update(other.generation_config_defaults)
-        merged_tools = self.default_tools + tuple(
-            tool for tool in other.default_tools if tool not in self.default_tools
-        )
         merged_indexes = self.clear_generation_config_indexes + tuple(
             idx
             for idx in other.clear_generation_config_indexes
@@ -60,7 +59,6 @@ class ModelDefaults:
         )
         return ModelDefaults(
             is_image_model=self.is_image_model or other.is_image_model,
-            default_tools=merged_tools,
             generation_config_defaults=merged_generation,
             clear_generation_config_indexes=merged_indexes,
             safety_settings=other.safety_settings
@@ -84,9 +82,6 @@ class ModelDefaults:
             is_image_model=other.is_image_model
             if "is_image_model" in other.specified_fields
             else self.is_image_model,
-            default_tools=other.default_tools
-            if "default_tools" in other.specified_fields
-            else self.default_tools,
             generation_config_defaults=merged_generation,
             clear_generation_config_indexes=(
                 other.clear_generation_config_indexes
@@ -228,10 +223,12 @@ def _coerce_safety_settings(raw: object) -> tuple[tuple[object, ...], ...] | Non
 
 def _defaults_from_mapping(raw: dict[str, object] | None) -> ModelDefaults:
     raw_dict = raw or {}
-    raw_default_tools = raw_dict.get("default_tools")
-    default_tools_list = (
-        raw_default_tools if isinstance(raw_default_tools, (list, tuple)) else ()
-    )
+    if "default_tools" in raw_dict:
+        # 工具只来自每次请求的声明；旧配置项留在文件里时必须提示它已失效。
+        logger.warning(
+            "config.yaml model_defaults 中的 default_tools 已不再生效："
+            "请求未声明 tools 时不会注入任何工具，需要时请在请求中显式声明"
+        )
     raw_gen_defaults = raw_dict.get("generation_config_defaults")
     gen_defaults = raw_gen_defaults if isinstance(raw_gen_defaults, dict) else None
     raw_clear_indexes = raw_dict.get("clear_generation_config_indexes")
@@ -240,7 +237,6 @@ def _defaults_from_mapping(raw: dict[str, object] | None) -> ModelDefaults:
     )
     return ModelDefaults(
         is_image_model=bool(raw_dict.get("is_image_model", False)),
-        default_tools=tuple(str(x) for x in default_tools_list),
         generation_config_defaults=_coerce_generation_defaults(gen_defaults),
         clear_generation_config_indexes=tuple(int(str(v)) for v in clear_indexes_list),
         safety_settings=_coerce_safety_settings(raw_dict.get("safety_settings")),
@@ -292,7 +288,6 @@ def _default_config() -> dict[str, object]:
                 {
                     "name": "gemma_models",
                     "match": {"prefixes": ["gemma-"]},
-                    "default_tools": ["google_search"],
                     "safety_settings": {
                         "Harassment": 5,
                         "Hate": 5,
@@ -407,15 +402,6 @@ def resolve_model_defaults(
     override = _compiled_model_overrides(resolved_path).get(normalized)
     if override is not None:
         resolved = resolved.overridden(override)
-
-    if resolved.is_image_model:
-        allowed = {"google_search", "image_search", "google_search_and_image_search"}
-        filtered = tuple(t for t in resolved.default_tools if t in allowed)
-        if filtered != resolved.default_tools:
-            from dataclasses import replace
-
-            resolved = replace(resolved, default_tools=filtered)
-
     return resolved
 
 

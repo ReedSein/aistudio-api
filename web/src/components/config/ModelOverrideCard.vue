@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 import type { ModelOverrideMap, ModelOverrideItem, ThinkingConfig } from './types.ts'
 import {
-  TOOL_SUGGESTIONS,
   IMAGE_MODE_OPTIONS,
   THINKING_LEVEL_OPTIONS,
   MEDIA_RESOLUTION_OPTIONS,
@@ -13,7 +12,7 @@ import ConfigSafetyGrid from './ConfigSafetyGrid.vue'
 import ConfigSwitch from './ConfigSwitch.vue'
 import FieldHelpTip from './FieldHelpTip.vue'
 import Button from '@/components/ui/Button.vue'
-import { Plus, Trash2, ChevronDown, ChevronRight, Layers, Cpu, Wrench } from 'lucide-vue-next'
+import { Plus, Trash2, ChevronDown, ChevronRight, Layers, Cpu } from 'lucide-vue-next'
 
 const props = defineProps<{
   models: ModelOverrideMap
@@ -304,24 +303,6 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
                 class="mt-4 shrink-0"
               />
             </div>
-          </div>
-
-          <!-- Tools -->
-          <div class="p-3.5 bg-gray-50/70 border border-gray-200/70 rounded-xl space-y-2">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
-                <Wrench class="w-4 h-4 text-brand-600" />
-                <span>模型专用工具</span>
-              </div>
-              <FieldHelpTip schema-key="profile.default_tools" />
-            </div>
-            <ConfigTagList
-              :model-value="override.default_tools || []"
-              label="覆盖通用 profile 的工具列表"
-              description="客户端未显式传 tools 时挂载的专用工具"
-              :suggestions="TOOL_SUGGESTIONS"
-              @update:model-value="updateModelField(String(modelKey), 'default_tools', $event as string[])"
-            />
           </div>
 
           <!-- Safety Settings -->

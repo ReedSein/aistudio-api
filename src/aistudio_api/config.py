@@ -16,9 +16,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DEFAULT_TEXT_MODEL = os.getenv("AISTUDIO_DEFAULT_TEXT_MODEL", "gemini-3.7-flash")
-DEFAULT_IMAGE_MODEL = os.getenv(
-    "AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flash-image-preview"
-)
 DEFAULT_BROWSER_PORT = 9222
 
 
@@ -43,6 +40,7 @@ def _load_int_env(*names: str, default: int) -> int:
         return default
     return int(value)
 
+
 def _load_web_password() -> str | None:
     return os.getenv("AISTUDIO_WEB_PASSWORD") or os.getenv("AISTUDIO_ADMIN_PASSWORD")
 
@@ -64,6 +62,7 @@ def _load_dump_to_file_env() -> bool:
     if val is None:
         return False
     return val.strip().lower() in ("1", "true", "yes", "on", "dump", "y", "t")
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"

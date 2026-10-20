@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import json
 import os
@@ -51,23 +50,6 @@ def extract_outer_json(raw: str) -> list[object]:
         except json.JSONDecodeError:
             continue
     return results
-
-
-def decode_base64_images(images: list[dict[str, object]]) -> list[dict[str, object]]:
-    decoded = []
-    for img in images:
-        try:
-            data = base64.b64decode(str(img["data"]))
-            decoded.append(
-                {
-                    "mime": str(img.get("mime", "image/jpeg")),
-                    "bytes": data,
-                    "size": len(data),
-                }
-            )
-        except Exception:
-            pass
-    return decoded
 
 
 def mask_email(email: str | None) -> str:

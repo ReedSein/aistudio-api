@@ -11,6 +11,7 @@ from aistudio_api.domain.errors import (
     SessionExpiredError,
     UsageLimitExceeded,
 )
+from aistudio_api.domain.models import FunctionCall, FunctionResponse, OutputPart
 
 
 def test_to_gemini_usage_metadata_uses_visible_and_reasoning_tokens():
@@ -32,72 +33,65 @@ def test_to_gemini_usage_metadata_uses_visible_and_reasoning_tokens():
     }
 
 
-def test_to_gemini_parts_keeps_function_call_and_response_parts():
+def _dump(parts):
+    return [part.model_dump(mode="json", exclude_none=True) for part in parts]
+
+
+def test_to_gemini_parts_serializes_each_part_in_order():
     parts = to_gemini_parts(
-        "",
-        function_calls=[{"name": "getWeather", "args": {"city": "Shanghai"}}],
-        function_responses=[{"name": "getWeather", "args": {"temperature": "24C"}}],
+        [
+            OutputPart(text="想一下", thought=True),
+            OutputPart(text="先查天气"),
+            OutputPart(
+                function_call=FunctionCall(
+                    name="getWeather", args={"city": "Shanghai"}, id="c1"
+                ),
+                thought_signature="SIG-FC",
+            ),
+            OutputPart(
+                function_response=FunctionResponse(
+                    name="getWeather", response={"temperature": "24C"}, id="c1"
+                )
+            ),
+            OutputPart(inline_data=("image/png", "cG5nLWJ5dGVz")),
+            OutputPart(text="", thought_signature="SIG-TEXT"),
+        ]
     )
 
-    assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
-        {"functionCall": {"name": "getWeather", "args": {"city": "Shanghai"}}},
+    assert _dump(parts) == [
+        {"text": "想一下", "thought": True},
+        {"text": "先查天气"},
+        {
+            "functionCall": {
+                "name": "getWeather",
+                "args": {"city": "Shanghai"},
+                "id": "c1",
+            },
+            "thoughtSignature": "SIG-FC",
+        },
         {
             "functionResponse": {
                 "name": "getWeather",
                 "response": {"temperature": "24C"},
+                "id": "c1",
             }
         },
-    ]
-
-
-def test_to_gemini_parts_can_emit_thought_part():
-    assert [
-        part.model_dump(mode="json", exclude_none=True)
-        for part in to_gemini_parts("答案", thinking="思考")
-    ] == [
-        {"text": "思考", "thought": True},
-        {"text": "答案"},
-    ]
-
-
-def test_to_gemini_parts_can_emit_inline_image_data():
-    from aistudio_api.domain.models import GeneratedImage
-
-    parts = to_gemini_parts(
-        "说明",
-        images=[GeneratedImage(mime="image/png", data=b"png-bytes", size=9)],
-    )
-
-    assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
-        {"text": "说明"},
         {"inlineData": {"mimeType": "image/png", "data": "cG5nLWJ5dGVz"}},
+        {"text": "", "thoughtSignature": "SIG-TEXT"},
     ]
 
 
-def test_to_gemini_parts_appends_candidate_signature_part():
-    parts = to_gemini_parts("答案", thinking="思考", thought_signature="SIG-1")
-
-    assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
-        {"text": "思考", "thought": True},
-        {"text": "答案"},
-        {"text": "", "thoughtSignature": "SIG-1"},
-    ]
-
-
-def test_to_gemini_parts_skips_signature_part_when_carried_by_function_call():
+def test_to_gemini_parts_emits_code_execution_parts():
     parts = to_gemini_parts(
-        "",
-        function_calls=[
-            {"name": "f", "args": {}, "call_id": "c1", "thought_signature": "SIG-1"}
-        ],
-        thought_signature="SIG-1",
+        [
+            OutputPart(executable_code=("PYTHON", "print(1 + 1)")),
+            OutputPart(code_execution_result=("OUTCOME_OK", "2\n")),
+        ]
     )
 
-    assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
-        {
-            "functionCall": {"name": "f", "args": {}, "id": "c1"},
-            "thoughtSignature": "SIG-1",
-        }
+    assert _dump(parts) == [
+        {"executableCode": {"language": "PYTHON", "code": "print(1 + 1)"}},
+        {"codeExecutionResult": {"outcome": "OUTCOME_OK", "output": "2\n"}},
     ]
 
 
@@ -275,7 +269,7 @@ async def test_streaming_metadata_event_does_not_block_failover():
             yield ("response_id", "resp_early")
             raise RequestError(204, "No content")
         # 第二次尝试：正常流式输出
-        yield ("body", "Hello world after retry")
+        yield ("parts", [OutputPart(text="Hello world after retry")])
         yield ("finish_reason", "STOP")
         yield ("done", None)
 
@@ -316,8 +310,8 @@ async def test_streaming_emits_thought_signature_as_own_chunk():
     from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
     async def fake_stream_generate_content(*args, **kwargs):
-        yield ("body", "Hello")
-        yield ("thought_signature", "SIG-9")
+        yield ("parts", [OutputPart(text="Hello")])
+        yield ("parts", [OutputPart(text="", thought_signature="SIG-9")])
         yield ("finish_reason", "STOP")
         yield ("done", None)
 

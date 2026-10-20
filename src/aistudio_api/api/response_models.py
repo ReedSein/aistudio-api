@@ -31,6 +31,16 @@ class GeminiInlineDataResponse(BaseModel):
     data: str
 
 
+class GeminiExecutableCodePayload(BaseModel):
+    language: str
+    code: str
+
+
+class GeminiCodeExecutionResultPayload(BaseModel):
+    outcome: str
+    output: str
+
+
 class GeminiPartResponse(BaseModel):
     text: str | None = None
     thought: bool | None = None
@@ -38,6 +48,8 @@ class GeminiPartResponse(BaseModel):
     thoughtSignature: str | None = None
     functionCall: GeminiFunctionCallPayload | None = None
     functionResponse: GeminiFunctionResponsePayload | None = None
+    executableCode: GeminiExecutableCodePayload | None = None
+    codeExecutionResult: GeminiCodeExecutionResultPayload | None = None
 
 
 class GeminiContentResponse(BaseModel):

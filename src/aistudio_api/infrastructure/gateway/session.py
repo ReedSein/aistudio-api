@@ -298,6 +298,7 @@ class BrowserSession:
                 and context.page.target_id != active_target_id
             ):
                 await self._cdp_client.close_target(context.page.target_id)
+
     async def ensure_botguard_service(self, force_refresh: bool = False) -> CDPPage:
         page = self.page
         curr_url = page.url if page else ""
@@ -338,6 +339,8 @@ class BrowserSession:
 
     async def generate_snapshot(self, contents: list[AistudioContent]) -> str:
         ctx = await self.ensure_ready()
+        # Same per-part mapping as the web client: only text, inline data and
+        # file references contribute; every other part type hashes as "".
         hash_parts: list[str] = []
         for content in contents:
             for part in content.parts:
@@ -347,10 +350,6 @@ class BrowserSession:
                     hash_parts.append(str(part.inline_data[1]))
                 elif part.file_id is not None:
                     hash_parts.append(str(part.file_id))
-                elif part.executable_code is not None:
-                    hash_parts.append(str(part.executable_code[1]))
-                elif part.code_execution_result is not None:
-                    hash_parts.append(str(part.code_execution_result[1]))
                 else:
                     hash_parts.append("")
 

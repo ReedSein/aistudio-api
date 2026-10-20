@@ -124,6 +124,8 @@ async def _messages(
     system: list[GeminiPart] = []
     # External ID -> (function name, original upstream ID).
     pending: dict[str, tuple[str, str | None]] = {}
+    # Consecutive tool results answer one batch of calls and share one turn.
+    tool_turn_open = False
     for index, message in enumerate(req.messages):
         key = f"messages.{index}"
         role = message.get("role")
@@ -170,9 +172,19 @@ async def _messages(
                         + "]\n"
                     ),
                 )
-            system.extend(parts)
-            continue
-        if role in {"tool", "function"}:
+            if not contents:
+                # Leading instructions become the system instruction.
+                system.extend(parts)
+                continue
+            # Later instructions keep their position as an unlabeled user turn;
+            # Gemini contents have no system role.
+            if pending:
+                raise OpenAIInputError(
+                    "Function calls must have their results before the next conversation turn",
+                    key,
+                )
+            target_role = "user"
+        elif role in {"tool", "function"}:
             external_id = message.get("tool_call_id")
             if role == "function":
                 matches = [
@@ -288,10 +300,13 @@ async def _messages(
             target_role = "model" if role == "assistant" else "user"
         if not parts:
             parts = [GeminiPart(text="")]
-        if contents and contents[-1].role == target_role:
+        is_tool_result = role in {"tool", "function"}
+        if is_tool_result and tool_turn_open:
             contents[-1].parts.extend(parts)
         else:
+            # Every other message keeps its own boundary, even next to the same role.
             contents.append(GeminiContent(role=target_role, parts=parts))
+        tool_turn_open = is_tool_result
     if pending:
         raise OpenAIInputError("Function calls are missing their results", "messages")
     if not contents:

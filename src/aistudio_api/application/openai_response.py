@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import time
 import uuid
@@ -16,7 +15,7 @@ from aistudio_api.application.api_service_gemini import to_gemini_finish_reason
 from aistudio_api.application.generation_service import generate_content, stream_content
 from aistudio_api.application.openai_tools import encode_call
 from aistudio_api.domain.errors import RequestError
-from aistudio_api.domain.models import GeneratedImage
+from aistudio_api.domain.models import OutputPart
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -47,22 +46,25 @@ def _finish_reason(value: object, *, tools: bool) -> str:
     return "tool_calls" if tools else "stop"
 
 
-def _images(images: list[GeneratedImage]) -> list[dict[str, object]]:
-    return [
-        {
-            "index": index,
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:{image.mime};base64,{base64.b64encode(image.data).decode('ascii')}"
-            },
-            **(
-                {"thought_signature": image.thought_signature}
-                if image.thought_signature
-                else {}
-            ),
-        }
-        for index, image in enumerate(images)
-    ]
+def _images(parts: list[OutputPart]) -> list[dict[str, object]]:
+    images: list[dict[str, object]] = []
+    for index, part in enumerate(parts):
+        if part.inline_data is None:
+            continue
+        mime, data = part.inline_data
+        images.append(
+            {
+                "index": index,
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{data}"},
+                **(
+                    {"thought_signature": part.thought_signature}
+                    if part.thought_signature
+                    else {}
+                ),
+            }
+        )
+    return images
 
 
 def _usage(value: object) -> dict[str, object] | None:
@@ -97,26 +99,30 @@ async def completion(
     model: str, req: GeminiGenerateContentRequest, client: AIStudioClient
 ) -> dict[str, Any]:
     normalized, output = await generate_content(model, req, client)
+    candidate = output.candidate
     calls = [
-        encode_call(call, output.thought_signature if i == 0 else "")
-        for i, call in enumerate(output.function_calls)
+        encode_call(part, candidate.thought_signature if i == 0 else "")
+        for i, part in enumerate(candidate.function_calls)
     ]
     message: dict[str, Any] = {
         "role": "assistant",
-        "content": output.text or (None if calls else ""),
+        "content": candidate.text or (None if calls else ""),
     }
-    if output.thinking:
-        message["reasoning_content"] = output.thinking
+    if candidate.thinking:
+        message["reasoning_content"] = candidate.thinking
     if calls:
         message["tool_calls"] = calls
-    if output.images:
-        message["images"] = _images(output.images)
-    if output.reasoning_images:
-        message["reasoning_images"] = _images(output.reasoning_images)
-    if output.thought_signature:
-        message["thought_signature"] = output.thought_signature
-    if output.function_responses:
-        message["function_responses"] = output.function_responses
+    if candidate.images:
+        message["images"] = _images(candidate.images)
+    if candidate.reasoning_images:
+        message["reasoning_images"] = _images(candidate.reasoning_images)
+    if candidate.thought_signature:
+        message["thought_signature"] = candidate.thought_signature
+    if candidate.function_responses:
+        message["function_responses"] = [
+            {"name": result.name, "response": result.response, "id": result.id}
+            for result in candidate.function_responses
+        ]
     reason = _finish_reason(
         output.candidates[0].finish_reason if output.candidates else None,
         tools=bool(calls),
@@ -146,7 +152,7 @@ async def completion_stream(
     usage = None
     reason: object = None
     signature = ""
-    calls: list[dict[str, object]] = []
+    calls: list[OutputPart] = []
     done = False
 
     def chunk(delta: dict[str, Any], finish: str | None = None) -> str:
@@ -180,33 +186,31 @@ async def completion_stream(
                 if kind == "done":
                     done = True
                     continue
-                if kind == "tool_calls":
-                    if not isinstance(value, list) or not all(
-                        isinstance(call, dict) for call in value
-                    ):
-                        raise RequestError(502, "Invalid upstream tool calls")
-                    calls.extend(value)
+                if kind != "parts" or not isinstance(value, list):
                     continue
-                delta: dict[str, Any] = {}
-                if kind == "body" and isinstance(value, str):
-                    delta["content"] = value
-                elif kind == "thinking" and isinstance(value, str):
-                    delta["reasoning_content"] = value
-                elif kind == "thought_signature" and isinstance(value, str):
-                    signature = value
-                    delta["thought_signature"] = value
-                elif kind in {"images", "reasoning_images"}:
-                    if not isinstance(value, list) or not all(
-                        isinstance(item, GeneratedImage) for item in value
-                    ):
-                        raise RequestError(502, "Invalid upstream image data")
-                    delta[kind] = _images(value)
-                if not delta:
-                    continue
-                if not started:
-                    yield chunk({"role": "assistant", "content": ""})
-                    started = True
-                yield chunk(delta)
+                for part in value:
+                    if not isinstance(part, OutputPart):
+                        raise RequestError(502, "Invalid upstream output part")
+                    if part.function_call is not None:
+                        calls.append(part)
+                        continue
+                    delta: dict[str, Any] = {}
+                    if part.inline_data is not None:
+                        key = "reasoning_images" if part.thought else "images"
+                        delta[key] = _images([part])
+                    elif part.text is not None:
+                        if part.text:
+                            key = "reasoning_content" if part.thought else "content"
+                            delta[key] = part.text
+                        if part.thought_signature:
+                            signature = part.thought_signature
+                            delta["thought_signature"] = part.thought_signature
+                    if not delta:
+                        continue
+                    if not started:
+                        yield chunk({"role": "assistant", "content": ""})
+                        started = True
+                    yield chunk(delta)
         if not done:
             raise RequestError(502, "Upstream stream ended without completion")
         finish = _finish_reason(reason, tools=bool(calls))

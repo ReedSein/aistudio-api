@@ -174,6 +174,8 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
 def record_rotator_event(
     event: str,
     model: str | None = None,
+    *,
+    scope: str = "unknown",
 ) -> None:
     """记录调度器事件（成功、限流、错误、鉴权异常）。"""
     rotator = runtime_state.rotator
@@ -184,7 +186,7 @@ def record_rotator_event(
     if event == "success":
         rotator.record_success(account.id, model=model)
     elif event == "rate_limited":
-        rotator.record_rate_limited(account.id, model=model)
+        rotator.record_rate_limited(account.id, model=model, scope=scope)
     elif event == "auth_error":
         rotator.record_auth_error(account.id, model=model)
     elif event == "error":

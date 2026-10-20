@@ -136,7 +136,7 @@ flowchart TD
   - `session_auth.py`：Cookie 过滤清洗（剔除 `OSID`、`SIDCC` 冲突项）、登录页重定向感知、邮箱身份探测与凭据原子落盘。
   - `botguard_bootstrap.py`：BotGuard WAA 握手、基础请求模板拦截与临时会话管理。
   - `wire_spec.py`：Protobuf-over-JSON (JSPB) 字段索引枚举与 `JspbArray` 稀疏容器定义。
-  - `wire_codec.py`：JSPB 请求结构组包、参数动态改写与内置工具注入。
+  - `wire_codec.py`：JSPB 请求结构组包、参数动态改写与内置工具编码。
   - `wire_parser.py`：JSPB 响应解析器，处理 Struct 结构体、ListValue 数组与状态码映射。
   - `wire_types.py`：领域数据结构契约（`AistudioContent`、`AistudioPart`、`AistudioGenerationConfig`）。
   - `stream_parser.py`：流式 JSON 增量状态机解析器，去除 XSSI 前缀并按括号深度切片分块。
@@ -219,6 +219,7 @@ sequenceDiagram
 - **403 鉴权异常快速隔离**：当账号遭遇 `The caller does not have permission` (403) 异常时，调度器立即对该账号设置短时隔离（`auth_cooldown`），优先调度至健康备用账号。
 - **Sticky 黏性调度**：默认保持当前活跃账号，直到该账号针对当前模型遭遇 429 限流或 403 异常时，才自动顺延切换至下一个健康账号。
 - **自动配额重置**：每日美西时间午夜（00:00 PST / 16:00 CST）自动重置 RPD 限制，无需重启服务。
+- **按上游原文区分限流窗口**：429 原文写明「每分钟」时只冷却该模型 60 秒，不计入升级为长冷却的次数，返回提示也写「每分钟请求数超限」；写明「每天」时按当日额度处理；未写明时沿用原有冷却规则，提示里带上游原文与实际剩余秒数。
 
 ### 4.3 防切号雪崩互斥锁 (`_switch_lock`) 与自愈
 

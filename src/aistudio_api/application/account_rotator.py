@@ -35,6 +35,9 @@ def get_pacific_date_key(ts: float | None = None) -> str:
         return dt.strftime("%Y-%m-%d")
 
 
+MINUTE_LIMIT_COOLDOWN_SECONDS = 60.0
+
+
 def get_seconds_until_pacific_midnight() -> float:
     """获取距离下一次美西太平洋时间午夜 00:00 的秒数。"""
     try:
@@ -259,7 +262,9 @@ class AccountStats:
             if not self.model_drip_mode.get(model):
                 self.model_rate_limited.pop(model, None)
 
-    def record_rate_limited(self, model: str | None = None) -> None:
+    def record_rate_limited(
+        self, model: str | None = None, scope: str = "unknown"
+    ) -> None:
         now = time.time()
         self.requests += 1
         self.rate_limited += 1
@@ -267,6 +272,15 @@ class AccountStats:
         la_date = get_pacific_date_key(now)
         cooldown_seconds = get_seconds_until_pacific_midnight()
         model = normalize_model_key(model)
+
+        if model and scope == "minute":
+            # A per-minute limit says nothing about the daily quota: wait out the
+            # minute without escalating toward the long drip cooldown.
+            self._check_date_reset(model, la_date)
+            self.model_requests[model] = self.model_requests.get(model, 0) + 1
+            self.model_requests_dates[model] = la_date
+            self.model_cooldowns[model] = now + MINUTE_LIMIT_COOLDOWN_SECONDS
+            return
 
         if model:
             self._check_date_reset(model, la_date)
@@ -621,11 +635,15 @@ class AccountRotator:
         self,
         account_id: str,
         model: str | None = None,
+        scope: str = "unknown",
     ) -> None:
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
-        self._stats[account_id].record_rate_limited(model)
-        logger.warning("账号 %s 在模型 %s 触发当日限额", account_id, model or "all")
+        self._stats[account_id].record_rate_limited(model, scope=scope)
+        window = {"minute": "每分钟", "day": "当日"}.get(scope, "未注明窗口的")
+        logger.warning(
+            "账号 %s 在模型 %s 触发%s限额", account_id, model or "all", window
+        )
 
         self.save_state()
 

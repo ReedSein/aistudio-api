@@ -85,8 +85,8 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 | **工具调用 (FunctionCall)** | `[..., [name, args_struct, call_id]]` | 请求中位于下标 `10` (Field 11)；响应中主路径位于下标 `3` (Field 4)，变体回退兼容下标 `10` |
 | **工具结果 (FunctionResponse)** | `[..., [name, response_struct, call_id]]` | 请求中位于下标 `11` (Field 12)；响应中主路径位于下标 `4` (Field 5)，变体回退兼容下标 `11` |
 | **资源引用 (FileData)** | `[null, null, null, null, null, ["file_id"]]` | 下标 `5` (Field 6) 为 `[file_id]` |
-| **可执行代码 (ExecutableCode)** | `[..., "print('hello')", ...]` | 下标 `8` (Field 9) 为模型生成的待执行代码脚本源码 |
-| **代码执行结果 (CodeResult)** | `[..., "output: hello", ...]` | 下标 `9` (Field 10) 为代码执行沙箱返回的输出结果 |
+| **可执行代码 (ExecutableCode)** | `[null×7, [1, "print(2 ** 100)"]]` | 下标 `7` (Field 8) 为 `[语言枚举, 源码]`，`1` = PYTHON；签名可在同一部件下标 `14`（2026-10-20 响应实测） |
+| **代码执行结果 (CodeResult)** | `[null×8, [1, "输出"]]` | 下标 `8` (Field 9) 为 `[结果枚举, 输出]`，实测 `1` = OUTCOME_OK（2026-10-20）；`2` = FAILED、`3` = DEADLINE_EXCEEDED 沿用请求编码器的映射，未实测 |
 | **思维签名 (ThoughtSignature)** | 位于任意 Part 的下标 `14` (`part[14] = "signature"`) | Google 官方校验思维链真实性的签名字符串 |
 
 #### 参数与返回值的 Protobuf 结构体编码 (Struct & Value)

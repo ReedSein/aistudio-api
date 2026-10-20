@@ -18,7 +18,21 @@ class SessionExpiredError(AuthError):
 
 
 class UsageLimitExceeded(AistudioError):
-    pass
+    """Upstream 429; ``scope`` is "minute", "day" or "unknown" per the upstream text."""
+
+    def __init__(self, message: str = "", scope: str = "unknown"):
+        self.scope = scope
+        super().__init__(message)
+
+
+def rate_limit_scope(text: str) -> str:
+    """Read which quota window an upstream 429 names, without guessing."""
+    lowered = text.lower()
+    if "per minute" in lowered or "perminute" in lowered:
+        return "minute"
+    if "per day" in lowered or "perday" in lowered:
+        return "day"
+    return "unknown"
 
 
 class RequestError(AistudioError):
@@ -60,6 +74,7 @@ def parse_upstream_grpc_error(raw_response: str) -> tuple[int | None, str]:
     try:
         data = json.loads(normalized)
         if isinstance(data, list):
+
             def _find_grpc(obj: object) -> tuple[int | None, str] | None:
                 if isinstance(obj, list):
                     if (
@@ -77,7 +92,9 @@ def parse_upstream_grpc_error(raw_response: str) -> tuple[int | None, str]:
                     err = obj.get("error")
                     if isinstance(err, dict) and "message" in err:
                         code = err.get("code")
-                        return (int(code) if isinstance(code, (int, float)) else None), str(err["message"])
+                        return (
+                            int(code) if isinstance(code, (int, float)) else None
+                        ), str(err["message"])
                 return None
 
             found = _find_grpc(data)
@@ -93,13 +110,17 @@ def classify_error(status: int, body: str) -> AistudioError:
     grpc_code, msg = parse_upstream_grpc_error(body)
     clean_msg = msg or body[:200]
     if grpc_code == 8 or status == 429:
-        return UsageLimitExceeded(f"配额用完: {clean_msg}")
+        return UsageLimitExceeded(
+            f"配额用完: {clean_msg}", scope=rate_limit_scope(body)
+        )
     if grpc_code == 16 or status == 401:
         return AuthError(f"认证失败: {clean_msg}")
     if grpc_code == 7 or status == 403:
         return AuthError(f"禁止访问: {clean_msg}")
     effective_status = GRPC_CODE_TO_HTTP.get(grpc_code, status) if grpc_code else status
     return RequestError(effective_status, clean_msg)
+
+
 def is_transient_rpc_error(exc: Exception) -> bool:
     """识别 Google 上游偶发且完全随机的 RPC 路由 404 (Ambiguous request for service)。"""
     if isinstance(exc, RequestError) and exc.status == 404:

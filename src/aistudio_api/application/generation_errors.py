@@ -109,7 +109,7 @@ async def handle_attempt_exception(
 
     if isinstance(exc, UsageLimitExceeded):
         runtime_state.record(target_model, "rate_limited")
-        record_rotator_event("rate_limited", model=target_model)
+        record_rotator_event("rate_limited", model=target_model, scope=exc.scope)
         if not has_yielded_data and await try_switch_account(
             model=target_model, failed_account_id=failed_id
         ):
@@ -124,7 +124,7 @@ async def handle_attempt_exception(
         raise HTTPException(
             429,
             detail={
-                "message": f"All accounts reached daily quota for model '{target_model}'. Quota resets at 00:00 PST.",
+                "message": rate_limit_message(exc, target_model, failed_id),
                 "type": "rate_limit_exceeded",
             },
         ) from exc
@@ -202,6 +202,25 @@ async def handle_attempt_exception(
     raise HTTPException(
         500, detail={"message": str(exc), "type": "server_error"}
     ) from exc
+
+
+def rate_limit_message(
+    exc: UsageLimitExceeded, model: str, account_id: str | None
+) -> str:
+    """Describe a 429 by the quota window the upstream actually named."""
+    if exc.scope == "day":
+        return (
+            f"All accounts reached daily quota for model '{model}'. "
+            "Quota resets at 00:00 PST."
+        )
+    rotator = runtime_state.rotator
+    stats = rotator.get_account_stats(account_id) if rotator and account_id else None
+    wait = round(stats.get_cooldown_remaining(model)) if stats else None
+    retry = f" Retry in about {wait} seconds." if wait else ""
+    if exc.scope == "minute":
+        return f"Requests-per-minute limit reached for model '{model}'.{retry}"
+    upstream = clean_upstream_error_message(str(exc))
+    return f"Upstream rate limit for model '{model}': {upstream}.{retry}"
 
 
 def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:

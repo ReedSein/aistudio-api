@@ -139,18 +139,9 @@ class StreamingGateway:
                     candidate = parse_response_chunk(parsed_chunk)
                     if candidate.finish_reason is not None:
                         latest_finish_reason = candidate.finish_reason
-                    if candidate.thinking:
-                        yield ("thinking", candidate.thinking)
-                    if candidate.reasoning_images:
-                        yield ("reasoning_images", candidate.reasoning_images)
-                    if candidate.function_calls:
-                        yield ("tool_calls", candidate.function_calls)
-                    if candidate.images:
-                        yield ("images", candidate.images)
-                    if candidate.text:
-                        yield ("body", candidate.text)
-                    if candidate.thought_signature:
-                        yield ("thought_signature", candidate.thought_signature)
+                    # One upstream chunk -> one event carrying its parts in order.
+                    if candidate.parts:
+                        yield ("parts", candidate.parts)
                     if latest_finish_reason is not None:
                         break
                 if latest_finish_reason is not None:

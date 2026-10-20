@@ -135,7 +135,7 @@ def test_record_rotator_event():
 
         record_rotator_event("rate_limited", model="gemini-2.5-flash")
         mock_rotator.record_rate_limited.assert_called_with(
-            "acc_1", model="gemini-2.5-flash"
+            "acc_1", model="gemini-2.5-flash", scope="unknown"
         )
 
         record_rotator_event("auth_error", model="gemini-2.5-flash")

@@ -134,7 +134,7 @@ const connectionFields = computed<StepField[]>(() => {
         label: '6. 流式传输 (Streaming)',
         selector: '#stream_toggle',
         value: '开启或关闭均支持',
-        note: '关闭时走 :generateContent 一次性返回；开启时走 :streamGenerateContent (SSE) 增量输出。',
+        note: '关闭时走 :generateContent 一次性返回；开启时走 :streamGenerateContent (SSE) 增量输出。想让回复的思考签名随聊天记录带回给模型，请开启：当前版本关闭流式时客户端不保存文本签名。',
       },
     ]
   }
@@ -183,7 +183,7 @@ const connectionFields = computed<StepField[]>(() => {
       label: '6. 流式与思考 (Streaming / Reasoning Effort)',
       selector: '#stream_toggle / #openai_reasoning_effort',
       value: '支持普通与流式；思考转为 thinkingLevel',
-      note: '模型思考过程通过 reasoning_content 字段独立返回，不会混入正文；工具调用签名通过 call_gemini_... 编号无状态往返。',
+      note: '模型思考过程通过 reasoning_content 字段独立返回，不会混入正文；工具调用签名通过 call_gemini_... 编号无状态往返，文本回复的思考签名客户端不会回传（需要时改用原生 Gemini 接法并开启流式）。',
     },
   ]
 })

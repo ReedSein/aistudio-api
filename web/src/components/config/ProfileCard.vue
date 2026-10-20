@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 import type { ModelProfileItem } from './types.ts'
 import {
-  TOOL_SUGGESTIONS,
   IMAGE_MODE_OPTIONS,
   THINKING_LEVEL_OPTIONS,
   MEDIA_RESOLUTION_OPTIONS,
@@ -18,7 +17,6 @@ import {
   ChevronRight,
   Trash2,
   Cpu,
-  Wrench,
   Layers,
 } from 'lucide-vue-next'
 
@@ -196,22 +194,6 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
         </div>
       </div>
 
-      <!-- Default Tools -->
-      <div class="p-3.5 bg-gray-50/70 border border-gray-200/70 rounded-xl space-y-2">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
-            <Wrench class="w-4 h-4 text-brand-600" />
-            <span>默认内置工具</span>
-          </div>
-          <FieldHelpTip schema-key="profile.default_tools" />
-        </div>
-        <ConfigTagList
-          label="已启用的默认工具"
-          description="客户端未显式传 tools 时，默认自动挂载的工具"
-          :suggestions="TOOL_SUGGESTIONS"
-          @update:model-value="updateField('default_tools', $event as string[])"
-        />
-      </div>
 
       <!-- Generation Config Defaults -->
       <div class="p-3.5 bg-gray-50/70 border border-gray-200/70 rounded-xl space-y-3">
