@@ -12,6 +12,7 @@ from aistudio_api.api.response_models import (
     GeminiModelListResponse,
     GeminiModelResponse,
 )
+from aistudio_api.infrastructure.gateway.model_discovery import ModelAliasAmbiguous
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("routes.models")
@@ -39,17 +40,36 @@ def _to_gemini_model(model_data: Mapping[str, object]) -> GeminiModelResponse:
             "createCachedContent",
         ]
     )
-    return GeminiModelResponse(
-        name=name,
-        version="001",
-        displayName=display_name,
-        description=description,
-        inputTokenLimit=input_tokens,
-        outputTokenLimit=output_tokens,
-        supportedGenerationMethods=methods,
-        temperature=1.0,
-        topP=0.95,
-        topK=64,
+    extensions = {
+        key: model_data[key]
+        for key in (
+            "aliases",
+            "capabilityCodes",
+            "capabilities",
+            "capabilitySource",
+            "defaultThinkingLevel",
+            "thinkingLevels",
+            "paid",
+            "paidHint",
+            "accessModes",
+            "metadataSource",
+        )
+        if key in model_data
+    }
+    return GeminiModelResponse.model_validate(
+        {
+            "name": name,
+            "version": model_data.get("version") or "001",
+            "displayName": display_name,
+            "description": description,
+            "inputTokenLimit": input_tokens,
+            "outputTokenLimit": output_tokens,
+            "supportedGenerationMethods": methods,
+            "temperature": model_data.get("temperature"),
+            "topP": model_data.get("topP"),
+            "topK": model_data.get("topK"),
+            **extensions,
+        }
     )
 
 
@@ -57,7 +77,7 @@ def _to_gemini_model(model_data: Mapping[str, object]) -> GeminiModelResponse:
 async def list_models(
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> GeminiModelListResponse:
-    session = runtime_state.client._session if runtime_state.client else None
+    session = runtime_state.client.session if runtime_state.client else None
     from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
 
     discovered = await model_discovery.get_models(session=session)
@@ -71,10 +91,13 @@ async def get_model(
     model_id: str,
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> GeminiModelResponse:
-    session = runtime_state.client._session if runtime_state.client else None
+    session = runtime_state.client.session if runtime_state.client else None
     from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
 
-    model_info = await model_discovery.get_model_by_id(model_id, session=session)
+    try:
+        model_info = await model_discovery.get_model_by_id(model_id, session=session)
+    except ModelAliasAmbiguous as exc:
+        raise HTTPException(409, detail=str(exc)) from None
     if model_info is not None:
         logger.info("成功获取模型元数据: %s", model_id)
         return _to_gemini_model(model_info)

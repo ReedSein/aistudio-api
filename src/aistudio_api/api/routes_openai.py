@@ -14,7 +14,10 @@ from pydantic import ValidationError
 from aistudio_api.application.openai_request import to_gemini_request
 from aistudio_api.application.openai_response import completion, completion_stream
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
-from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
+from aistudio_api.infrastructure.gateway.model_discovery import (
+    ModelAliasAmbiguous,
+    model_discovery,
+)
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 from .dependencies import get_client, get_runtime_state
@@ -109,7 +112,7 @@ def _model(data: Mapping[str, object]) -> dict[str, object]:
 
 @router.get("/v1/models")
 async def list_openai_models(state: RuntimeState = Depends(get_runtime_state)):
-    session = state.client._session if state.client else None
+    session = state.client.session if state.client else None
     models = await model_discovery.get_models(session=session)
     return {"object": "list", "data": [_model(item) for item in models]}
 
@@ -118,10 +121,13 @@ async def list_openai_models(state: RuntimeState = Depends(get_runtime_state)):
 async def get_openai_model(
     model_id: str, state: RuntimeState = Depends(get_runtime_state)
 ):
-    session = state.client._session if state.client else None
-    model = await model_discovery.get_model_by_id(
-        model_id.removeprefix("models/"), session=session
-    )
+    session = state.client.session if state.client else None
+    try:
+        model = await model_discovery.get_model_by_id(
+            model_id.removeprefix("models/"), session=session
+        )
+    except ModelAliasAmbiguous as exc:
+        raise HTTPException(409, detail=str(exc)) from None
     if model is None:
         raise HTTPException(404, detail="Model not found")
     return _model(model)

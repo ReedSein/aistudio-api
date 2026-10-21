@@ -116,6 +116,16 @@ class GeminiModelResponse(BaseModel):
     temperature: float | None = None
     topP: float | None = None
     topK: int | None = None
+    aliases: list[str] | None = None
+    capabilityCodes: list[int] | None = None
+    capabilities: list[str] | None = None
+    capabilitySource: str | None = None
+    defaultThinkingLevel: int | None = None
+    thinkingLevels: list[int] | None = None
+    paid: bool | None = None
+    paidHint: int | None = None
+    accessModes: list[int] | None = None
+    metadataSource: str | None = None
 
 
 class GeminiModelListResponse(BaseModel):

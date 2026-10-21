@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL, settings
 
@@ -41,89 +42,35 @@ def build_image_generation_search_tool(
     if google_search and image_search:
         return [None, None, None, [None, [[], []]]]
     if google_search:
-        return TOOLS_TEMPLATES["google_search"]
+        return deepcopy(TOOLS_TEMPLATES["google_search"])
     return [None, None, None, [None, [None, []]]]
-
-
-def _normalize_tool_name(raw_name: str, *, is_image_model: bool = False) -> str:
-    name = str(raw_name).strip().lower()
-    if is_image_model:
-        if name in {
-            "google_search_and_image_search",
-            "image_google_search_and_image_search",
-        }:
-            return "google_search_and_image_search"
-        if name in {"image_search", "google_image_search"}:
-            return "image_search"
-        if name in {"google_search", "image_google_search"}:
-            return "google_search"
-    return name
-
-
-def _allowed_builtin_tools_for_model(
-    model: str | None, *, is_image_model: bool = False
-) -> set[str]:
-    if is_image_model:
-        return {"google_search", "image_search", "google_search_and_image_search"}
-    normalized_model = str(model or "").removeprefix("models/").lower()
-    if normalized_model.startswith("gemma-"):
-        return {"google_search", "code_execution"}
-    if normalized_model.startswith("gemini-"):
-        return {"google_search", "code_execution", "google_maps", "url_context"}
-    return {"google_search", "code_execution"}
 
 
 def build_tools_from_names(
     tool_names: list[str] | tuple[str, ...],
     *,
-    model: str | None = None,
     is_image_model: bool = False,
-    drop_unsupported: bool = False,
 ) -> list[list]:
-    allowed = _allowed_builtin_tools_for_model(model, is_image_model=is_image_model)
+    """Encode already resolved builtin names without consulting model state."""
     if is_image_model:
-        google_search = False
-        image_search = False
-        for raw_name in tool_names:
-            name = _normalize_tool_name(raw_name, is_image_model=True)
-            if not name:
-                continue
-            if name not in allowed:
-                if drop_unsupported:
-                    continue
-                raise ValueError(
-                    f"Tool {raw_name!r} is not allowed for model {model or 'unknown'}"
-                )
-            if name == "google_search_and_image_search":
-                google_search = True
-                image_search = True
-            elif name == "google_search":
-                google_search = True
-            elif name == "image_search":
-                image_search = True
+        allowed = {"google_search", "image_search", "google_search_and_image_search"}
+        if any(name not in allowed for name in tool_names):
+            raise ValueError("Unknown image search tool encoding")
+        google_search = any(
+            name in ("google_search", "google_search_and_image_search")
+            for name in tool_names
+        )
+        image_search = any(
+            name in ("image_search", "google_search_and_image_search")
+            for name in tool_names
+        )
         tool = build_image_generation_search_tool(
-            google_search=google_search,
-            image_search=image_search,
+            google_search=google_search, image_search=image_search
         )
         return [tool] if tool is not None else []
-
-    tools: list[list[object]] = []
-    for raw_name in tool_names:
-        name = _normalize_tool_name(raw_name, is_image_model=False)
-        if not name:
-            continue
-        if name not in allowed:
-            if drop_unsupported:
-                continue
-            raise ValueError(
-                f"Tool {raw_name!r} is not allowed for model {model or 'unknown'}"
-            )
-        if name not in TOOLS_TEMPLATES:
-            if drop_unsupported:
-                continue
-            raise ValueError(f"Unsupported tool name: {raw_name!r}")
-        tools.append(TOOLS_TEMPLATES[name])
-    return tools
+    if any(name not in TOOLS_TEMPLATES for name in tool_names):
+        raise ValueError("Unknown builtin tool encoding")
+    return [deepcopy(TOOLS_TEMPLATES[name]) for name in tool_names]
 
 
 class AistudioWireCodec:

@@ -75,6 +75,9 @@ async def lifespan(_app: FastAPI):
     account_service = AccountService(account_store, rotator)
     runtime_state.account_service = account_service
     client.session.bind_account_store(account_store)
+    from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
+
+    model_discovery.bind_account_store(account_store)
 
     logger.info(
         "Client initialized (port=%s, accounts=%d)",

@@ -31,6 +31,35 @@ class BenefitTierIndex(IntEnum):
     TIER = 0
 
 
+class ModelListIndex(IntEnum):
+    MODELS = 0
+
+
+class ModelIndex(IntEnum):
+    """ListModels entry offsets; extended fields remain observational metadata."""
+
+    NAME = 0
+    VERSION = 2
+    DISPLAY_NAME = 3
+    DESCRIPTION = 4
+    INPUT_TOKEN_LIMIT = 5
+    OUTPUT_TOKEN_LIMIT = 6
+    METHODS = 7
+    TEMPERATURE = 8
+    TOP_P = 9
+    TOP_K = 10
+    ALIASES = 56
+    CAPABILITIES = 64
+    THINKING_CONFIG = 71
+    PAID_HINT = 77
+    ACCESS_MODES = 82
+
+
+class ModelThinkingIndex(IntEnum):
+    DEFAULT_LEVEL = 5
+    LEVELS = 6
+
+
 class PartIndex(IntEnum):
     """Indexes in a Content Part array."""
 

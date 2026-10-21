@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from aistudio_api.application.builtin_tools import resolve_builtin_tool_names
 from aistudio_api.infrastructure.gateway.wire_codec import (
     AistudioWireCodec,
     build_image_generation_search_tool,
@@ -16,6 +17,16 @@ from aistudio_api.infrastructure.gateway.wire_types import (
 )
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
+
+
+def build_model_tools(names, *, model, is_image_model=False, drop_unsupported=False):
+    resolved = resolve_builtin_tool_names(
+        names,
+        model=model,
+        is_image_model=is_image_model,
+        drop_unsupported=drop_unsupported,
+    )
+    return build_tools_from_names(resolved, is_image_model=is_image_model)
 
 
 def test_modify_body_updates_generation_config_and_prompt():
@@ -60,17 +71,17 @@ def test_build_image_generation_search_tool_variants():
 
 
 def test_build_tools_from_names_supports_image_tool_aliases():
-    assert build_tools_from_names(
+    assert build_model_tools(
         ["google_search"],
         model="models/gemini-3.1-flash-image-preview",
         is_image_model=True,
     ) == [[None, None, None, [None, [[]]]]]
-    assert build_tools_from_names(
+    assert build_model_tools(
         ["image_search"],
         model="models/gemini-3.1-flash-image-preview",
         is_image_model=True,
     ) == [[None, None, None, [None, [None, []]]]]
-    assert build_tools_from_names(
+    assert build_model_tools(
         ["google_search_and_image_search"],
         model="models/gemini-3.1-flash-image-preview",
         is_image_model=True,
@@ -78,7 +89,7 @@ def test_build_tools_from_names_supports_image_tool_aliases():
 
 
 def test_build_tools_from_names_merges_image_search_flags_into_single_tool():
-    assert build_tools_from_names(
+    assert build_model_tools(
         ["google_search", "image_search"],
         model="models/gemini-3.1-flash-image-preview",
         is_image_model=True,
@@ -86,7 +97,7 @@ def test_build_tools_from_names_merges_image_search_flags_into_single_tool():
 
 
 def test_build_tools_from_names_restricts_gemma_builtin_tools():
-    assert build_tools_from_names(
+    assert build_model_tools(
         ["google_search", "code_execution"], model="models/gemma-4-31b-it"
     ) == [
         [None, None, None, [None, [[]]]],
@@ -94,7 +105,7 @@ def test_build_tools_from_names_restricts_gemma_builtin_tools():
     ]
 
     try:
-        build_tools_from_names(["google_maps"], model="models/gemma-4-31b-it")
+        build_model_tools(["google_maps"], model="models/gemma-4-31b-it")
     except ValueError as exc:
         assert "not allowed" in str(exc)
     else:
@@ -102,7 +113,7 @@ def test_build_tools_from_names_restricts_gemma_builtin_tools():
 
 
 def test_build_tools_from_names_allows_four_gemini_builtin_tools():
-    assert build_tools_from_names(
+    assert build_model_tools(
         ["google_search", "code_execution", "google_maps", "url_context"],
         model="models/gemini-3.5-flash",
     ) == [
@@ -115,9 +126,7 @@ def test_build_tools_from_names_allows_four_gemini_builtin_tools():
 
 def test_build_tools_from_names_restricts_unknown_model_to_safe_subset():
     try:
-        build_tools_from_names(
-            ["google_maps"], model="models/learnlm-1.5-pro-experimental"
-        )
+        build_model_tools(["google_maps"], model="models/learnlm-1.5-pro-experimental")
     except ValueError as exc:
         assert "not allowed" in str(exc)
     else:

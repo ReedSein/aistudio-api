@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 from dataclasses import dataclass
 
+from aistudio_api.application.builtin_tools import resolve_builtin_tool_names
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
 from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
 from aistudio_api.infrastructure.gateway.wire_spec import JspbArray, SchemaIndex
@@ -615,10 +616,13 @@ def normalize_gemini_request(
                 if filtered_builtin:
                     tools.extend(
                         build_tools_from_names(
-                            filtered_builtin,
-                            model=model,
+                            resolve_builtin_tool_names(
+                                filtered_builtin,
+                                model=model,
+                                is_image_model=model_defaults.is_image_model,
+                                drop_unsupported=model_defaults.drop_unsupported_params,
+                            ),
                             is_image_model=model_defaults.is_image_model,
-                            drop_unsupported=model_defaults.drop_unsupported_params,
                         )
                     )
                     seen_builtin.update(filtered_builtin)

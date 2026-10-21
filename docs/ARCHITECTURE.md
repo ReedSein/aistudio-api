@@ -109,6 +109,7 @@ flowchart TD
 |---|---|
 | `generation_service.py` / `generation_errors.py` | 跨协议共享的生成执行生命周期，统一承载账号就绪、重试与故障转移、流中途不重试不变量、完成信号校验与统计记录 |
 | `chat_service.py` | 将客户端提交的 Gemini 请求转换为内部结构，处理 Base64 媒体、系统提示与工具参数声明 |
+| `builtin_tools.py` | 在编码前统一解析内置工具名称和现有模型兼容规则，保留显式兼容设置与原生工具声明合同 |
 | `openai_request.py` / `openai_parameters.py` / `openai_media.py` / `openai_tools.py` / `openai_response.py` | 将 OpenAI Chat Completions 请求转换为 `GeminiGenerateContentRequest`（含参数降级记录、DNS 绑定的受限公网图片读取、无状态工具签名编码），并将生成结果组装为 OpenAI JSON 或增量 SSE |
 | `account_rotator.py` | 负责多账号的 Sticky 黏性调度，按模型维护 429 限流与 403 鉴权异常隔离状态，每日美西午夜重置 |
 | `account_orchestrator.py` | 提供全局防雪崩互斥锁（`_switch_lock`），在并发 429 与 403 异常时实现安全有序故障转移切号与单账号在位自愈 |
@@ -136,7 +137,7 @@ flowchart TD
   - `session_auth.py`：Cookie 过滤清洗（剔除 `OSID`、`SIDCC` 冲突项）、登录页重定向感知、邮箱身份探测与凭据原子落盘。
   - `botguard_bootstrap.py`：BotGuard WAA 握手、基础请求模板拦截与临时会话管理。
   - `wire_spec.py`：Protobuf-over-JSON (JSPB) 字段索引枚举与 `JspbArray` 稀疏容器定义。
-  - `wire_codec.py`：JSPB 请求结构组包、参数动态改写与内置工具编码。
+  - `wire_codec.py`：JSPB 请求结构组包、参数动态改写与内置工具编码；工具编码接收调用方已解析的名称，不读取模型目录缓存。
   - `wire_parser.py`：JSPB 响应解析器，处理 Struct 结构体、ListValue 数组与状态码映射。
   - `wire_types.py`：领域数据结构契约（`AistudioContent`、`AistudioPart`、`AistudioGenerationConfig`）。
   - `stream_parser.py`：流式 JSON 增量状态机解析器，去除 XSSI 前缀并按括号深度切片分块。
@@ -144,7 +145,7 @@ flowchart TD
   - `capture.py`：请求模板缓存与纯内存模型适配。
   - `replay.py`：页面上下文 XHR 请求重放与异常降级。
   - `streaming.py`：流式响应分发与异常映射。
-  - `model_discovery.py`：可用模型列表动态探测与本地降级。
+  - `model_discovery.py`：模型目录与可选元数据解析；单份缓存绑定账号、凭据版本、子账号及已知等级，失败只保留同一身份的旧结果，并明确标记动态、过期或本地目录来源。
   - `model_defaults.py`：模型默认规则解析与 mtime 驱动的内存缓存。
 - **账号与持久化子系统 (`account/`)**：
   - `account_store.py`：账号凭据持久化存储（通过临时文件原子替换保障并发安全）。
@@ -245,6 +246,14 @@ sequenceDiagram
 同一会话的并发调用等待同一个准备任务，等待者超时或取消只结束自身等待；最后一个等待者退出后取消并清理准备任务。启动全程保持 `PREPARING` 状态，空闲回收在会话切换锁内重新核验状态与在途数量。
 
 生成生命周期统一管理最多五次尝试。恢复动作的瞬时失败消耗当前尝试并回到外层决策，不绕过重试循环；预算耗尽明确返回不可用。已经输出生成内容后不重发。登录、地区和输入错误保留原有分类；页面重导航后重新检查输入框并安装页面脚本，不复用失效脚本状态。
+
+### 4.6 模型目录与规则边界
+
+模型查询优先使用与目标账号身份匹配的公开会话上下文，并在查询期间持有页面使用计数；没有匹配页面时使用账号存储提供的凭据快照。每次刷新选择一种传输方式，不在失败后自动追加另一笔查询。缓存按单调时钟计算有效期，切号、重新导入或已知等级变化后不能复用原身份的目录。
+
+目录单项查询统一处理模型名称和别名；多个条目声明同一标识时明确返回冲突。生成保持调用方的模型标识，由上游解析，不根据目录擅自改换模型。新增采样默认值只用于元数据展示，用户参数与已有本地配置仍走原生成配置链。
+
+扩展能力码及访问档位的语义尚未逐项由真实样本确认。解析保留原始枚举、未知值与来源，缺失字段不当作“不支持”或免费。内置工具沿既有模型兼容规则和显式兼容设置在调用方解析；编码器只构造结构。原生函数声明与消息部件不因这些未验证元数据而被删去。字段及证据边界见 [WIRE_SPECIFICATION.md](WIRE_SPECIFICATION.md#10-模型目录扩展元数据)。
 
 ## 5. 跨平台支持与依赖隔离
 
