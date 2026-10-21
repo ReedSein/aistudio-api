@@ -167,6 +167,18 @@ class AccountService:
         )
         return imported
 
+    def warn_unconfirmed_tiers(self) -> list[AccountMeta]:
+        """Log accounts whose tier was never refreshed; paid models refuse them."""
+        unconfirmed = [a for a in self._store.list_accounts() if a.tier is None]
+        if unconfirmed:
+            logger.warning(
+                "%d 个账号尚未刷新会员等级，付费模型会拒绝这些账号，"
+                "请在控制台「账号管理」点击「刷新等级」: %s",
+                len(unconfirmed),
+                "、".join(f"{a.name} ({a.id})" for a in unconfirmed),
+            )
+        return unconfirmed
+
     def get_account_auth_path(self, account_id: str) -> Path | None:
         """获取指定账号的 auth.json 路径。"""
         return self._store.get_auth_path(account_id)

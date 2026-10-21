@@ -522,15 +522,30 @@ class AccountRotator:
         failed_account_id: str | None = None,
         *,
         is_session_expired: bool = False,
+        excluded_account_ids: frozenset[str] = frozenset(),
     ) -> AccountMeta | None:
-        """获取下一个可用账号（排除失败账号，优先平滑故障转移至健康账号）。"""
+        """获取下一个可用账号（排除失败账号，优先平滑故障转移至健康账号）。
+
+        ``excluded_account_ids`` are accounts the calling request already failed
+        on; they are never returned, including by the auth-cooldown fallback.
+        """
         async with self._lock:
-            available = self._get_available_accounts(model)
+
+            def eligible(
+                ignore_auth_cooldown: bool,
+            ) -> list[tuple[AccountMeta, AccountStats]]:
+                return [
+                    (a, s)
+                    for a, s in self._get_available_accounts(
+                        model, ignore_auth_cooldown=ignore_auth_cooldown
+                    )
+                    if a.id not in excluded_account_ids
+                ]
+
+            available = eligible(False)
             if not available:
                 # 保底：若所有账号都处于 auth_cooldown 中，允许 fallback 尝试恢复
-                available = self._get_available_accounts(
-                    model, ignore_auth_cooldown=True
-                )
+                available = eligible(True)
                 if not available:
                     return None
 

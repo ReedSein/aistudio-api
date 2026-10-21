@@ -21,6 +21,10 @@ class SessionExpiredError(AuthError):
     """明确被 Google 重定向至登录页（Cookie 真正失效）。"""
 
 
+class PermissionDeniedError(AuthError):
+    """Upstream PERMISSION_DENIED (gRPC 7 / HTTP 403): signed in, but refused."""
+
+
 class UsageLimitExceeded(AistudioError):
     """Upstream 429; ``scope`` is "minute", "day" or "unknown" per the upstream text."""
 
@@ -120,7 +124,7 @@ def classify_error(status: int, body: str) -> AistudioError:
     if grpc_code == 16 or status == 401:
         return AuthError(f"认证失败: {clean_msg}")
     if grpc_code == 7 or status == 403:
-        return AuthError(f"禁止访问: {clean_msg}")
+        return PermissionDeniedError(f"禁止访问: {clean_msg}")
     effective_status = GRPC_CODE_TO_HTTP.get(grpc_code, status) if grpc_code else status
     return RequestError(effective_status, clean_msg)
 

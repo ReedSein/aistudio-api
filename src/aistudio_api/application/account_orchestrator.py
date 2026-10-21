@@ -35,8 +35,13 @@ async def try_switch_account(
     is_auth_error: bool = False,
     is_session_expired: bool = False,
     failed_credential_version: str | None = None,
+    excluded_account_ids: frozenset[str] = frozenset(),
 ) -> bool:
-    """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。"""
+    """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。
+
+    ``excluded_account_ids`` lists accounts the calling request already failed
+    on; they are neither selected nor reused through the concurrency shortcuts.
+    """
     global _last_switch_time
     entry_time = time.time()
 
@@ -48,6 +53,7 @@ async def try_switch_account(
             cur_active = account_service.get_active_account()
             if (
                 cur_active
+                and cur_active.id not in excluded_account_ids
                 and (
                     cur_active.id != failed_account_id
                     or _last_switch_time >= entry_time
@@ -84,6 +90,7 @@ async def try_switch_account(
         if (
             _last_switch_time >= entry_time
             and current_id
+            and current_id not in excluded_account_ids
             and (not is_session_expired or current_id != failed_account_id)
             and rotator.is_account_available(current_id, model=model)
         ):
@@ -105,6 +112,7 @@ async def try_switch_account(
             failed_account_id
             and current_id
             and current_id != failed_account_id
+            and current_id not in excluded_account_ids
             and rotator.is_account_available(current_id, model=model)
         ):
             logger.info(
@@ -119,6 +127,7 @@ async def try_switch_account(
             current_account_id=current_id,
             failed_account_id=failed_account_id,
             is_session_expired=is_session_expired,
+            excluded_account_ids=excluded_account_ids,
         )
         if next_account is None:
             if is_session_expired:
@@ -160,7 +169,9 @@ async def try_switch_account(
                 _last_switch_time = time.time()
             return result is not None
         return bool(
-            current_id and rotator.is_account_available(current_id, model=model)
+            current_id
+            and current_id not in excluded_account_ids
+            and rotator.is_account_available(current_id, model=model)
         )
 
 

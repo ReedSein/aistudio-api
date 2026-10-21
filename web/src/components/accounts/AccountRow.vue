@@ -109,10 +109,10 @@ async function handleDetectEmail() {
               {{ account.email || account.name || 'Google Account' }}
             </span>
             <Badge
-              :variant="account.tier ? 'blue' : 'gray'"
+              :variant="account.tier ? 'blue' : 'amber'"
               size="sm"
             >
-              {{ account.tier || '等级未确认' }}
+              {{ account.tier || '等级未刷新' }}
             </Badge>
             <button
               type="button"
@@ -136,7 +136,10 @@ async function handleDetectEmail() {
           </div>
           <div class="text-[11px] text-gray-400 mt-1">
             <span v-if="account.tier_checked_at">最后确认：{{ formatDate(account.tier_checked_at) }}</span>
-            <span v-else>尚无已确认的会员查询结果</span>
+            <span
+              v-if="!account.tier"
+              class="text-amber-700 font-medium"
+            >未刷新会员等级：付费模型会拒绝此账号，请点「刷新等级」</span>
             <span
               v-if="tierError"
               class="text-amber-700 ml-2"

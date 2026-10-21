@@ -20,11 +20,13 @@ from aistudio_api.application.chat_service import (
     normalize_gemini_request,
 )
 from aistudio_api.application.generation_errors import (
+    RequestAccountFailures,
     classify_gemini_error_payload,
     handle_attempt_exception,
 )
 from aistudio_api.domain.errors import RequestError
 from aistudio_api.domain.models import ModelOutput
+from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.readiness import preparation_budget, preparing
 from aistudio_api.infrastructure.utils.logger import get_logger
@@ -85,17 +87,15 @@ async def _generate_content(
     client: AIStudioClient,
 ) -> tuple[NormalizedGeminiRequest, ModelOutput]:
     last_error: Exception | None = None
-    account_id: str | None = None
-    account_version: str | None = None
+    account: AccountMeta | None = None
+    failures = RequestAccountFailures()
 
-    def bind_account(value: str | None, version: str) -> None:
-        nonlocal account_id, account_version
-        account_id = value
-        account_version = version
+    def bind_account(value: AccountMeta | None) -> None:
+        nonlocal account
+        account = value
 
     for attempt in range(MAX_RETRIES):
-        account_id = None
-        account_version = None
+        account = None
         normalized = None
         try:
             normalized = normalize_gemini_request(req, model_path)
@@ -117,7 +117,7 @@ async def _generate_content(
                 raise RequestError(
                     502, "Upstream response ended without a finish reason"
                 )
-            _success(normalized.model, output.usage, account_id)
+            _success(normalized.model, output.usage, account.id if account else None)
             return normalized, output
         except Exception as exc:
             last_error = exc
@@ -127,8 +127,8 @@ async def _generate_content(
                 model_path=model_path,
                 normalized_model=normalized.model if normalized else None,
                 client=client,
-                attempt_account_id=account_id,
-                attempt_account_version=account_version,
+                attempt_account=account,
+                failures=failures,
             ):
                 continue
             raise
@@ -141,17 +141,15 @@ async def _stream_content(
     client: AIStudioClient,
 ) -> AsyncGenerator[tuple[str, object], None]:
     last_error: Exception | None = None
-    account_id: str | None = None
-    account_version: str | None = None
+    account: AccountMeta | None = None
+    failures = RequestAccountFailures()
 
-    def bind_account(value: str | None, version: str) -> None:
-        nonlocal account_id, account_version
-        account_id = value
-        account_version = version
+    def bind_account(value: AccountMeta | None) -> None:
+        nonlocal account
+        account = value
 
     for attempt in range(MAX_RETRIES):
-        account_id = None
-        account_version = None
+        account = None
         normalized = None
         emitted = False
         completed = False
@@ -185,7 +183,7 @@ async def _stream_content(
                     502,
                     "Upstream stream ended without a finish reason or completion marker",
                 )
-            _success(normalized.model, usage, account_id)
+            _success(normalized.model, usage, account.id if account else None)
             return
         except Exception as exc:
             last_error = exc
@@ -196,8 +194,8 @@ async def _stream_content(
                 normalized_model=normalized.model if normalized else None,
                 client=client,
                 has_yielded_data=emitted,
-                attempt_account_id=account_id,
-                attempt_account_version=account_version,
+                attempt_account=account,
+                failures=failures,
             ):
                 continue
             raise

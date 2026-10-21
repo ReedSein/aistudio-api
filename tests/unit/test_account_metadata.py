@@ -190,8 +190,7 @@ async def test_old_auth_failure_cannot_lock_reimported_credentials(
         model_path="fixture",
         normalized_model="fixture",
         client=client,
-        attempt_account_id=old.id,
-        attempt_account_version=old.credential_version,
+        attempt_account=old,
     )
     assert await try_switch_account(
         model="fixture",

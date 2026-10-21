@@ -45,6 +45,20 @@ usePolling(loadData, 10000)
 
 <template>
   <div class="space-y-6">
+    <div
+      v-if="accountsStore.activeAccount && !accountsStore.activeAccount.tier"
+      class="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+    >
+      <AlertTriangle class="w-4 h-4 mt-0.5 shrink-0 text-amber-500" />
+      <span>
+        当前账号尚未刷新会员等级，付费模型会拒绝它。请到
+        <RouterLink
+          to="/accounts"
+          class="font-semibold underline"
+        >账号管理</RouterLink>
+        点击「刷新等级」。
+      </span>
+    </div>
     <!-- Stat Cards Grid -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       <StatCard

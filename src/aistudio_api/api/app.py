@@ -85,6 +85,7 @@ async def lifespan(_app: FastAPI):
         len(account_store.list_accounts()),
     )
     logger.info("控制台地址: http://localhost:%s/", runtime_state.port)
+    account_service.warn_unconfirmed_tiers()
 
     # 后台预热浏览器，避免首次请求延迟
     warmup_task = None

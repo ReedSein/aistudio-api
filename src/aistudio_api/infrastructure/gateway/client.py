@@ -13,6 +13,7 @@ from aistudio_api.config import (
 )
 from aistudio_api.domain.errors import RequestError, classify_error
 from aistudio_api.domain.models import ModelOutput
+from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.diagnostics.redaction import (
     REDACTED,
     sanitize,
@@ -163,11 +164,12 @@ class AIStudioClient:
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
         force_refresh_capture: bool = False,
-        on_account: Callable[[str | None, str], None] | None = None,
+        on_account: Callable[[AccountMeta | None], None] | None = None,
     ):
         async with self._session.request_scope() as ctx:
             if on_account is not None:
-                on_account(ctx.account_id, ctx.credential_version)
+                # The same snapshot decides this request's credentials and tier header.
+                on_account(self._session.account_snapshot(ctx))
             captured = await self.capture_request(
                 prompt=capture_prompt,
                 model=model,
@@ -210,11 +212,12 @@ class AIStudioClient:
         max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
-        on_account: Callable[[str | None, str], None] | None = None,
+        on_account: Callable[[AccountMeta | None], None] | None = None,
     ) -> ModelOutput:
         async with self._session.request_scope() as ctx:
             if on_account is not None:
-                on_account(ctx.account_id, ctx.credential_version)
+                # The same snapshot decides this request's credentials and tier header.
+                on_account(self._session.account_snapshot(ctx))
             logger.info("拦截请求: %r", f"{capture_prompt[:20]}...")
             captured = await self.capture_request(
                 prompt=capture_prompt,

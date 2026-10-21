@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -16,6 +18,7 @@ from aistudio_api.application.account_orchestrator import (
 from aistudio_api.domain.errors import (
     AistudioError,
     AuthError,
+    PermissionDeniedError,
     PreparationTimeout,
     RequestError,
     SessionExpiredError,
@@ -28,7 +31,39 @@ from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.readiness import preparing
 from aistudio_api.infrastructure.utils.logger import get_logger
 
+if TYPE_CHECKING:
+    from aistudio_api.infrastructure.account.account_store import AccountMeta
+
 logger = get_logger("generation")
+
+TIER_UNCONFIRMED_HINT = (
+    "该账号尚未刷新会员等级，付费模型会因此被拒绝；"
+    "请在控制台「账号管理」点击「刷新等级」后重试"
+)
+
+
+@dataclass
+class RequestAccountFailures:
+    """Accounts one request has already failed on, with the reason for each.
+
+    A request never switches back to an account recorded here; once every
+    account has failed, the final error lists them all.
+    """
+
+    reasons: dict[str, str] = field(default_factory=dict)
+
+    def record(self, account_id: str | None, reason: str) -> None:
+        if account_id:
+            self.reasons[account_id] = reason
+
+    def excluded(self) -> frozenset[str]:
+        return frozenset(self.reasons)
+
+    def describe(self, message: str) -> str:
+        if len(self.reasons) < 2:
+            return message
+        tried = "；".join(f"{key}: {value}" for key, value in self.reasons.items())
+        return f"{message}（本次请求已尝试的账号均失败——{tried}）"
 
 
 async def _switch_account(
@@ -38,6 +73,7 @@ async def _switch_account(
     is_auth_error: bool = False,
     is_session_expired: bool = False,
     failed_credential_version: str | None = None,
+    failures: RequestAccountFailures,
 ) -> bool:
     async with preparing():
         return await try_switch_account(
@@ -46,6 +82,7 @@ async def _switch_account(
             is_auth_error=is_auth_error,
             is_session_expired=is_session_expired,
             failed_credential_version=failed_credential_version,
+            excluded_account_ids=failures.excluded(),
         )
 
 
@@ -75,8 +112,8 @@ async def _classify_attempt_exception(
     normalized_model: str | None,
     client: AIStudioClient,
     has_yielded_data: bool = False,
-    attempt_account_id: str | None = None,
-    attempt_account_version: str | None = None,
+    attempt_account: AccountMeta | None = None,
+    failures: RequestAccountFailures,
 ) -> bool:
     """Handle per-attempt error classification and account switching.
 
@@ -85,6 +122,10 @@ async def _classify_attempt_exception(
     target_model = normalized_model or model_path
     account_svc = runtime_state.account_service
     active_acc = account_svc.get_active_account() if account_svc else None
+    attempt_account_id = attempt_account.id if attempt_account else None
+    attempt_account_version = (
+        attempt_account.credential_version if attempt_account else None
+    )
     failed_id = attempt_account_id or (active_acc.id if active_acc else None)
 
     if (
@@ -116,12 +157,14 @@ async def _classify_attempt_exception(
     if isinstance(exc, SessionExpiredError):
         logger.warning("账号会话失效，已被重定向到登录页: %s", exc)
         client.clear_templates()
+        failures.record(failed_id, "登录已失效")
         if not has_yielded_data and await _switch_account(
             model=target_model,
             failed_account_id=failed_id,
             is_auth_error=True,
             is_session_expired=True,
             failed_credential_version=attempt_account_version,
+            failures=failures,
         ):
             logger.info(
                 "已切换至其他可用健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES
@@ -130,25 +173,45 @@ async def _classify_attempt_exception(
         raise HTTPException(
             401,
             detail={
-                "message": "All accounts encountered login redirect or expired sessions. Please import fresh cookies.",
+                "message": failures.describe(
+                    "All accounts encountered login redirect or expired sessions. Please import fresh cookies."
+                ),
                 "type": "auth_error",
             },
+        ) from exc
+
+    if (
+        isinstance(exc, PermissionDeniedError)
+        and attempt_account is not None
+        and attempt_account.tier is None
+    ):
+        # Without a confirmed tier no tier header is sent, so paid models refuse
+        # every such account alike; switching would only cool down healthy ones.
+        logger.warning(
+            "账号 %s 会员等级未刷新，403 不换号并结束请求: %s", failed_id, exc
+        )
+        record_rotator_event("error", model=target_model, account_id=failed_id)
+        raise HTTPException(
+            403,
+            detail={"message": f"{exc}。{TIER_UNCONFIRMED_HINT}", "type": "auth_error"},
         ) from exc
 
     if isinstance(exc, AuthError):
         logger.warning("账号 403 权限拒绝: %s", exc)
         client.clear_templates()
         record_rotator_event("auth_error", model=target_model, account_id=failed_id)
+        failures.record(failed_id, str(exc))
         if not has_yielded_data and await _switch_account(
             model=target_model,
             failed_account_id=failed_id,
             is_auth_error=True,
             failed_credential_version=attempt_account_version,
+            failures=failures,
         ):
             logger.info("切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
         raise HTTPException(
-            403, detail={"message": str(exc), "type": "auth_error"}
+            403, detail={"message": failures.describe(str(exc)), "type": "auth_error"}
         ) from exc
 
     if isinstance(exc, UsageLimitExceeded):
@@ -156,8 +219,9 @@ async def _classify_attempt_exception(
         record_rotator_event(
             "rate_limited", model=target_model, scope=exc.scope, account_id=failed_id
         )
+        failures.record(failed_id, "配额已用完 (429)")
         if not has_yielded_data and await _switch_account(
-            model=target_model, failed_account_id=failed_id
+            model=target_model, failed_account_id=failed_id, failures=failures
         ):
             logger.info(
                 "429 触发限额，切换账号 (%d/%d): model=%s",
@@ -170,7 +234,9 @@ async def _classify_attempt_exception(
         raise HTTPException(
             429,
             detail={
-                "message": rate_limit_message(exc, target_model, failed_id),
+                "message": failures.describe(
+                    rate_limit_message(exc, target_model, failed_id)
+                ),
                 "type": "rate_limit_exceeded",
             },
         ) from exc
@@ -213,8 +279,12 @@ async def _classify_attempt_exception(
             raise HTTPException(
                 503, detail={"message": str(exc), "type": "service_unavailable"}
             ) from exc
+        failures.record(failed_id, "页面准备超时")
         if not has_yielded_data and await _switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=False
+            model=target_model,
+            failed_account_id=failed_id,
+            is_auth_error=False,
+            failures=failures,
         ):
             logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
@@ -267,10 +337,14 @@ async def handle_attempt_exception(
     normalized_model: str | None,
     client: AIStudioClient,
     has_yielded_data: bool = False,
-    attempt_account_id: str | None = None,
-    attempt_account_version: str | None = None,
+    attempt_account: AccountMeta | None = None,
+    failures: RequestAccountFailures | None = None,
 ) -> bool:
-    """Keep transient recovery failures inside the caller's bounded attempt loop."""
+    """Keep transient recovery failures inside the caller's bounded attempt loop.
+
+    Pass the same ``failures`` to every attempt of one request so it never
+    switches back to an account that already failed it.
+    """
     try:
         if isinstance(exc, PreparationTimeout):
             raise exc
@@ -281,8 +355,8 @@ async def handle_attempt_exception(
             normalized_model=normalized_model,
             client=client,
             has_yielded_data=has_yielded_data,
-            attempt_account_id=attempt_account_id,
-            attempt_account_version=attempt_account_version,
+            attempt_account=attempt_account,
+            failures=failures if failures is not None else RequestAccountFailures(),
         )
     except PreparationTimeout as timeout:
         raise HTTPException(
