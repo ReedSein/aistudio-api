@@ -28,6 +28,11 @@ export const accountsApi = {
       method: 'POST',
     })
   },
+  detectTier(id: string): Promise<Account> {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}/detect-tier`, {
+      method: 'POST',
+    })
+  },
 
   delete(id: string): Promise<{ ok: boolean }> {
     return request<{ ok: boolean }>(`/api/accounts/${id}`, {

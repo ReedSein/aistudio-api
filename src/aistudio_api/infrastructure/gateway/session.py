@@ -12,6 +12,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from aistudio_api.config import settings
+from aistudio_api.domain.accounts import BenefitTier
 from aistudio_api.domain.errors import SessionExpiredError
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.browser.browser_engine import (
@@ -76,6 +77,9 @@ class BrowserSession:
         self._account_store: AccountStore | None = None
         self._request_context: ContextVar[SessionContext | None] = ContextVar(
             "request_session_context", default=None
+        )
+        self._request_account: ContextVar[AccountMeta | None] = ContextVar(
+            "request_account_snapshot", default=None
         )
         self._profile_dir = derive_profile_dir(self._auth_file)
         self._proc: ChromiumProcess | None = None
@@ -154,6 +158,18 @@ class BrowserSession:
             and account.credential_version == context.credential_version
         )
 
+    def account_snapshot(self, context: SessionContext) -> AccountMeta | None:
+        if self._request_context.get() is context:
+            return self._request_account.get()
+        if self._account_store is not None and context.account_id is not None:
+            account = self._account_store.get_account(context.account_id)
+            if (
+                account is not None
+                and account.credential_version == context.credential_version
+            ):
+                return account
+        return context.account
+
     def get_current_auth_user(self) -> str:
         """获取当前活跃账号的 auth_user 编号（0, 1, 2...）。"""
         if self._auth_user is not None:
@@ -169,14 +185,18 @@ class BrowserSession:
         self._last_activity_time = time.time()
         ctx: SessionContext | None = None
         token = None
+        account_token = None
         try:
             ctx = await self.ensure_ready()
             ctx.incr_in_flight()
+            account_token = self._request_account.set(self.account_snapshot(ctx))
             token = self._request_context.set(ctx)
             yield ctx
         finally:
             if token is not None:
                 self._request_context.reset(token)
+            if account_token is not None:
+                self._request_account.reset(account_token)
             self._in_flight = max(0, self._in_flight - 1)
             if ctx is not None:
                 ctx.decr_in_flight()
@@ -415,8 +435,7 @@ class BrowserSession:
                     auth_user=target_auth_user,
                     auth_file=auth_file,
                     base_template=base_template,
-                    account_id=account.id if account else None,
-                    credential_version=account.credential_version if account else "",
+                    account=account,
                 )
 
                 if not self._context_is_current(new_context):
@@ -573,6 +592,7 @@ class BrowserSession:
         url: str | None = None,
         headers: dict[str, str] | None = None,
         context: SessionContext | None = None,
+        tier: BenefitTier | None = None,
     ) -> tuple[int, bytes]:
         ctx = context or await self.ensure_ready()
         if not ctx.is_usable():
@@ -593,6 +613,7 @@ class BrowserSession:
                 body=body,
                 timeout_ms=timeout_ms,
                 auth_user=ctx.auth_user,
+                tier=tier,
             )
         finally:
             ctx.decr_in_flight()
@@ -605,6 +626,7 @@ class BrowserSession:
         url: str | None = None,
         headers: dict[str, str] | None = None,
         context: SessionContext | None = None,
+        tier: BenefitTier | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
         ctx = context or await self.ensure_ready()
         if not ctx.is_usable():
@@ -625,6 +647,7 @@ class BrowserSession:
                 body=body,
                 timeout_ms=timeout_ms,
                 auth_user=ctx.auth_user,
+                tier=tier,
             ):
                 yield event
         finally:

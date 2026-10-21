@@ -35,4 +35,5 @@ class RequestReplayService:
             url=captured.url,
             headers=headers,
             context=captured.context,
+            tier=captured.account.tier if captured.account else None,
         )

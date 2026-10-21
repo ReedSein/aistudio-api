@@ -9,6 +9,8 @@ from collections.abc import AsyncGenerator
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
+from aistudio_api.domain.accounts import BenefitTier
+from aistudio_api.infrastructure.account.benefit_tier import TIER_HEADERS
 from aistudio_api.infrastructure.account.cookie_parser import calculate_sapisid_hash
 from aistudio_api.infrastructure.browser.scripts import (
     HOOKED_REQUEST_JS,
@@ -27,7 +29,10 @@ logger = get_logger("transport")
 
 
 async def _ensure_authorization_header(
-    page: CDPPage, headers: dict[str, str], auth_user: str = "0"
+    page: CDPPage,
+    headers: dict[str, str],
+    auth_user: str = "0",
+    tier: BenefitTier | None = None,
 ) -> dict[str, str]:
     """Ensure fresh SAPISIDHASH Authorization and X-Goog-AuthUser header are populated in Python."""
     incoming_auth = ""
@@ -40,9 +45,18 @@ async def _ensure_authorization_header(
         k: v
         for k, v in headers.items()
         if k.lower()
-        not in ("host", "content-length", "authorization", "x-goog-authuser")
+        not in (
+            "host",
+            "content-length",
+            "authorization",
+            "x-goog-authuser",
+            "x-aistudio-g1-tier",
+        )
     }
     clean_headers["X-Goog-AuthUser"] = str(auth_user or "0")
+    tier_header = TIER_HEADERS.get(tier) if tier is not None else None
+    if tier_header:
+        clean_headers["X-AIStudio-G1-Tier"] = tier_header
 
     # 1. 优先使用 page 上的内存缓存 Cookie，避免高并发下向 Chromium 密集发送重复的 Network.getCookies CDP 流量
     cookie_dict = getattr(page, "_cached_cookies", None)
@@ -130,12 +144,13 @@ class XHRStreamTransport:
         body: str,
         timeout_ms: int,
         auth_user: str = "0",
+        tier: BenefitTier | None = None,
     ) -> tuple[int, bytes]:
         """Replay request via XHR inside the browser page context."""
         unlimited = timeout_ms <= 0
         timeout_s = 0.0 if unlimited else timeout_ms / 1000
         clean_headers = await _ensure_authorization_header(
-            page, headers, auth_user=auth_user
+            page, headers, auth_user=auth_user, tier=tier
         )
         args = build_hooked_request_args(
             url=url,
@@ -164,6 +179,7 @@ class XHRStreamTransport:
         body: str,
         timeout_ms: int,
         auth_user: str = "0",
+        tier: BenefitTier | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Send a streaming request, yielding ('status', int) and ('chunk', bytes) events.
 
@@ -172,7 +188,7 @@ class XHRStreamTransport:
         unlimited = timeout_ms <= 0
         timeout_s = 0.0 if unlimited else timeout_ms / 1000
         clean_headers = await _ensure_authorization_header(
-            page, headers, auth_user=auth_user
+            page, headers, auth_user=auth_user, tier=tier
         )
         rid = uuid.uuid4().hex[:8]
 

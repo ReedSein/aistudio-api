@@ -22,6 +22,7 @@ export const useAccountsStore = defineStore('accounts', () => {
   const loading = ref(false)
   const activatingId = ref<string | null>(null)
   const importing = ref(false)
+  const detectingTierIds = ref(new Set<string>())
 
   const activeId = computed(() => activeAccount.value?.id || '')
 
@@ -186,6 +187,26 @@ export const useAccountsStore = defineStore('accounts', () => {
     }
   }
 
+  async function detectAccountTier(id: string) {
+    if (detectingTierIds.value.has(id)) return null
+    detectingTierIds.value.add(id)
+    const toast = useToastStore()
+    try {
+      const updated = await accountsApi.detectTier(id)
+      if (!updated.tier) throw new Error('服务未返回已确认的会员等级')
+      accounts.value = accounts.value.map((account) => account.id === id ? updated : account)
+      if (activeAccount.value?.id === id) activeAccount.value = updated
+      toast.success(`会员等级已更新：${updated.tier}`)
+      return updated
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '会员等级查询失败')
+      await fetchAll()
+      return null
+    } finally {
+      detectingTierIds.value.delete(id)
+    }
+  }
+
   return {
     accounts,
     activeAccount,
@@ -195,6 +216,7 @@ export const useAccountsStore = defineStore('accounts', () => {
     loading,
     activatingId,
     importing,
+    detectingTierIds,
     fetchAll,
     activateAccount,
     deleteAccount,
@@ -204,5 +226,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     probeAndImport,
     importBundle,
     detectAccountEmail,
+    detectAccountTier,
   }
 })

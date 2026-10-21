@@ -6,6 +6,9 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aistudio_api.domain.accounts import TierRefreshError
+from aistudio_api.infrastructure.account.benefit_tier import query_benefit_tier
+
 if TYPE_CHECKING:
     from aistudio_api.application.account_rotator import AccountRotator
     from aistudio_api.infrastructure.account.account_store import (
@@ -167,3 +170,40 @@ class AccountService:
     def get_account_auth_path(self, account_id: str) -> Path | None:
         """获取指定账号的 auth.json 路径。"""
         return self._store.get_auth_path(account_id)
+
+    async def detect_tier(self, account_id: str) -> AccountMeta:
+        """Query once with an immutable credential snapshot, then compare-and-save."""
+        try:
+            account = self._store.get_account(account_id)
+        except (OSError, ValueError):
+            raise TierRefreshError("storage") from None
+        if account is None:
+            raise TierRefreshError("not_found")
+        error: TierRefreshError | None = None
+        tier = None
+        try:
+            snapshot = self._store.credential_snapshot(account_id)
+            if snapshot is None:
+                raise TierRefreshError("stale")
+            account, credentials = snapshot
+            tier = await query_benefit_tier(credentials, account.auth_user)
+        except (OSError, ValueError):
+            error = TierRefreshError("credentials")
+        except TierRefreshError as exc:
+            if exc.reason == "stale":
+                raise
+            error = exc
+        try:
+            updated = self._store.save_tier_result(
+                account.id,
+                account.credential_version,
+                tier=tier,
+                error=error.reason if error else None,
+            )
+        except (OSError, ValueError):
+            raise TierRefreshError("storage") from None
+        if updated is None:
+            raise TierRefreshError("stale")
+        if error is not None:
+            raise error
+        return updated

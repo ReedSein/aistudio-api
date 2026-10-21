@@ -16,6 +16,7 @@ import {
   Mail,
 } from 'lucide-vue-next'
 import { useAccountsStore } from '@/stores/accounts.ts'
+import { formatDate } from '@/utils/format.ts'
 
 const props = defineProps<{
   account: AccountWithStats
@@ -51,6 +52,17 @@ const todayRequests = computed(() => {
 
 const accountsStore = useAccountsStore()
 const detectingEmail = ref(false)
+const tierError = computed(() => {
+  const reasons: Record<string, string> = {
+    rate_limited: '等级查询受到限流',
+    authentication: '登录凭据未通过验证',
+    invalid_response: '无法识别等级查询结果',
+    unavailable: '网络或等级查询服务不可用',
+    credentials: '账号凭据不可用',
+    storage: '查询结果保存失败',
+  }
+  return props.account.tier_last_error ? reasons[props.account.tier_last_error] || '等级查询失败' : ''
+})
 
 async function handleDetectEmail() {
   detectingEmail.value = true
@@ -96,6 +108,12 @@ async function handleDetectEmail() {
             <span class="font-semibold text-gray-900 text-xs truncate">
               {{ account.email || account.name || 'Google Account' }}
             </span>
+            <Badge
+              :variant="account.tier ? 'blue' : 'gray'"
+              size="sm"
+            >
+              {{ account.tier || '等级未确认' }}
+            </Badge>
             <button
               type="button"
               class="text-gray-300 hover:text-gray-600 transition-colors cursor-pointer"
@@ -115,6 +133,14 @@ async function handleDetectEmail() {
               class="text-amber-600/90 bg-amber-50 px-1 py-0.2 rounded text-[10px] border border-amber-200/50"
             >未记录邮箱</span>
             <span>ID: {{ account.id }}</span>
+          </div>
+          <div class="text-[11px] text-gray-400 mt-1">
+            <span v-if="account.tier_checked_at">最后确认：{{ formatDate(account.tier_checked_at) }}</span>
+            <span v-else>尚无已确认的会员查询结果</span>
+            <span
+              v-if="tierError"
+              class="text-amber-700 ml-2"
+            >{{ tierError }}；{{ account.tier ? '保留上次结果' : '尚无已确认结果' }}</span>
           </div>
         </div>
       </div>
@@ -208,6 +234,20 @@ async function handleDetectEmail() {
             @click="handleDetectEmail"
           >
             <Mail class="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            class="flex items-center gap-1 px-1.5 py-1 text-[11px] text-gray-500 hover:text-brand-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+            title="向 Google 查询此账号的会员等级"
+            :disabled="accountsStore.detectingTierIds.has(account.id)"
+            @click="accountsStore.detectAccountTier(account.id)"
+          >
+            <RefreshCw
+              class="w-3.5 h-3.5"
+              :class="{ 'animate-spin': accountsStore.detectingTierIds.has(account.id) }"
+            />
+            {{ accountsStore.detectingTierIds.has(account.id) ? '查询中' : '刷新等级' }}
           </button>
 
           <button

@@ -25,6 +25,12 @@ class TopLevelIndex(IntEnum):
     LOCATION = 13
 
 
+class BenefitTierIndex(IntEnum):
+    """Scalar enum in a successful GetAiStudioBenefitTier JSPB response."""
+
+    TIER = 0
+
+
 class PartIndex(IntEnum):
     """Indexes in a Content Part array."""
 

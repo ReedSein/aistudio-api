@@ -50,6 +50,7 @@ usePolling(loadData, 10000)
       <StatCard
         label="当前激活账号"
         :value="activeAccountDisplay"
+        :sub-value="accountsStore.activeAccount ? `会员等级：${accountsStore.activeAccount.tier || '未确认'}` : ''"
         :color="accountsStore.activeAccount ? 'green' : 'default'"
       >
         <template #icon>

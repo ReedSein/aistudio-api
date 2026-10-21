@@ -104,6 +104,7 @@ class StreamingGateway:
             url=captured.url if captured else None,
             headers=captured.headers if captured else None,
             context=captured.context,
+            tier=captured.account.tier if captured.account else None,
         ):
             if event_type == "status" and payload and not status_code:
                 status_code = int(str(payload))

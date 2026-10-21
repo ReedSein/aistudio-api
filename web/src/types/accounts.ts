@@ -8,6 +8,9 @@ export interface Account {
   last_used?: string | null
   auth_user: string
   cookie_id?: string | null
+  tier?: 'Free' | 'Plus' | 'Pro' | 'Ultra' | null
+  tier_checked_at?: string | null
+  tier_last_error?: string | null
 }
 
 export interface AccountWithStats extends Omit<Account, 'last_used'>, Partial<AccountRotationStats> {

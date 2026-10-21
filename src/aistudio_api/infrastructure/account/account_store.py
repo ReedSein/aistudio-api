@@ -15,6 +15,7 @@ from os.path import abspath, basename, join
 from pathlib import Path
 from typing import ClassVar
 
+from aistudio_api.domain.accounts import BenefitTier
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 log = get_logger("account.store")
@@ -103,6 +104,9 @@ class AccountMeta:
     auth_user: str = "0"
     cookie_id: str | None = None
     credential_version: str = ""
+    tier: BenefitTier | None = None
+    tier_checked_at: str | None = None
+    tier_last_error: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -112,7 +116,14 @@ class AccountMeta:
         for key in ("id", "name", "created_at"):
             if not isinstance(data.get(key), str):
                 raise ValueError("Invalid account metadata")
-        for key in ("email", "last_used", "cookie_id", "credential_version"):
+        for key in (
+            "email",
+            "last_used",
+            "cookie_id",
+            "credential_version",
+            "tier_checked_at",
+            "tier_last_error",
+        ):
             if data.get(key) is not None and not isinstance(data[key], str):
                 raise ValueError("Invalid account metadata field")
         auth_user = data.get("auth_user", "0")
@@ -131,6 +142,15 @@ class AccountMeta:
             if data.get("cookie_id") is not None
             else None,
             credential_version=str(data.get("credential_version") or ""),
+            tier=next(
+                (tier for tier in BenefitTier if tier.value == data.get("tier")), None
+            ),
+            tier_checked_at=str(data["tier_checked_at"])
+            if data.get("tier_checked_at") is not None
+            else None,
+            tier_last_error=str(data["tier_last_error"])
+            if data.get("tier_last_error") is not None
+            else None,
         )
 
 
@@ -467,6 +487,48 @@ class AccountStore:
     def get_auth_path(self, account_id: str) -> Path | None:
         """获取指定账号的 auth.json 路径。"""
         return self.get_auth_path_optional(account_id, require_exists=True)
+
+    def credential_snapshot(
+        self, account_id: str
+    ) -> tuple[AccountMeta, dict[str, object]] | None:
+        with self._lock:
+            account = self.get_account(account_id)
+            if account is None:
+                return None
+            path = _safe_account_dir(self._accounts_dir, account_id) / "auth.json"
+            state = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                raise ValueError("Invalid account credential state")
+            return account, state
+
+    def save_tier_result(
+        self,
+        account_id: str,
+        expected_version: str,
+        *,
+        tier: BenefitTier | None = None,
+        error: str | None = None,
+    ) -> AccountMeta | None:
+        with self._lock:
+            registry = self._load_registry()
+            account = registry.accounts.get(account_id)
+            if account is None or account.credential_version != expected_version:
+                return None
+            if error is not None:
+                updated = replace(account, tier_last_error=error)
+            else:
+                if tier is None:
+                    raise ValueError("A successful tier result must be known")
+                updated = replace(
+                    account,
+                    tier=tier,
+                    tier_checked_at=datetime.now(UTC).isoformat(),
+                    tier_last_error=None,
+                )
+            self._save_registry(
+                replace(registry, accounts={**registry.accounts, account_id: updated})
+            )
+            return updated
 
     def save_refreshed_cookies(
         self, account_id: str, credential_version: str, cookies: list[dict[str, object]]

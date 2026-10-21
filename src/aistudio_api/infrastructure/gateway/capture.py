@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
+from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.diagnostics.redaction import REDACTED, sanitized_json
 from aistudio_api.infrastructure.diagnostics.store import get_store
 from aistudio_api.infrastructure.gateway.session import BrowserSession
@@ -26,6 +27,7 @@ class CapturedRequest:
     model: str = ""
     snapshot: str = ""
     context: SessionContext | None = None
+    account: AccountMeta | None = None
 
 
 class RequestCaptureService:
@@ -63,6 +65,7 @@ class RequestCaptureService:
     ) -> CapturedRequest | None:
         # 先经就绪门等待：预热/切号完成前不能捕获模板，否则占位模板会在解码时越界（冷启动竞态）
         ctx = await self._session.ensure_ready()
+        account = self._session.account_snapshot(ctx)
         if force_refresh:
             self._templates.pop(model, None)
         template = await self._ensure_template(model, ctx)
@@ -100,6 +103,7 @@ class RequestCaptureService:
             model=model,
             snapshot=snapshot,
             context=ctx,
+            account=account,
         )
         import json
 

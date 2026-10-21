@@ -24,6 +24,7 @@
   - [7.3 Token 使用量 (UsageMetadata)](#73-token-使用量-usagemetadata)
   - [7.4 FinishReason 完整状态码映射表](#74-finishreason-完整状态码映射表)
 - [8. 前端逆向新特性与高价值发现](#8-前端逆向新特性与高价值发现)
+- [9. 会员等级查询与请求头](#9-会员等级查询与请求头)
 ---
 
 ## 1. 协议概览与序列化机制
@@ -353,3 +354,20 @@ AI Studio Web 核心过滤数组：
    下发给 MakerSuite 的 `tools` 需保留字段的 `description` (下标 2) 与 `enum` (下标 4)，以保障模型获取参数语义与合法枚举选项。同时参数 Schema 数组下标上限为 `22` (`propertyOrdering`)，不包含 `title` 与 `default` 字段。
 4. **客户端 Schema 字段多态解包 (`parametersJsonSchema`)**：
    官方 SDK（如 `@google/genai`）在生成 Gemini 工具规范时，默认将参数挂载在 `parametersJsonSchema` 字段下。网关层兼容该多态字段提取，保障参数结构完整转换。
+
+## 9. 会员等级查询与请求头
+
+`MakerSuiteService/GetAiStudioBenefitTier` 使用独立的 POST RPC，正文为 `[]`。账号 Cookie、SAPISIDHASH 与 `X-Goog-AuthUser` 必须来自同一账号快照。
+
+成功响应采用 JSPB 数组，等级位于 `BenefitTierIndex.TIER`，即索引 0。当前采用的枚举和头部映射为：
+
+| 枚举 | 等级 | `X-AIStudio-G1-Tier` |
+|---|---|---|
+| 0 | Free | 不添加 |
+| 1 | Pro | `TIER1` |
+| 2 | Ultra | `TIER2` |
+| 3 | Plus | `TIER0` |
+
+HTTP 200 且响应类型、JSPB 结构有效时，空数组或首字段 `null` 按默认标量枚举 0 解释。空正文、布尔值、小数、未知枚举、错误格式和非成功 HTTP 状态均为查询失败，不能转换成 Free。付费枚举与请求头沿用上游协议映射；夹具覆盖不替代相应真实付费账号的兼容性验证。
+
+生成请求显式使用本次账号快照的等级，先移除模板中的旧会员头，再按上表添加。Free 和未知均不添加会员头，也不从全局活跃账号补值。会员查询的管理接口及持久化语义见 [ACCOUNT_METADATA.md](ACCOUNT_METADATA.md)。

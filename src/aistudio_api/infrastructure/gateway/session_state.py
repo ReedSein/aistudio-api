@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from aistudio_api.infrastructure.account.account_store import AccountMeta
     from aistudio_api.infrastructure.browser.cdp_client import CDPPage
 
 
@@ -29,12 +30,19 @@ class SessionContext:
     auth_user: str
     auth_file: str | None
     base_template: dict[str, object]
-    account_id: str | None = None
-    credential_version: str = ""
+    account: AccountMeta | None = None
     context_id: int = field(default_factory=itertools.count(1).__next__)
     created_at: float = field(default_factory=time.time)
     in_flight: int = 0
     drain_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    @property
+    def account_id(self) -> str | None:
+        return self.account.id if self.account else None
+
+    @property
+    def credential_version(self) -> str:
+        return self.account.credential_version if self.account else ""
 
     def incr_in_flight(self) -> None:
         self.drain_event.clear()

@@ -11,6 +11,7 @@ from aistudio_api.api.dependencies import (
     get_account_service,
     get_runtime_state,
 )
+from aistudio_api.domain.accounts import BenefitTier, TierRefreshError
 from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string
 from aistudio_api.infrastructure.diagnostics.store import get_store
@@ -34,6 +35,9 @@ class AccountResponse(BaseModel):
     last_used: str | None
     auth_user: str = "0"
     cookie_id: str | None = None
+    tier: BenefitTier | None = None
+    tier_checked_at: str | None = None
+    tier_last_error: str | None = None
 
 
 def to_account_response(account: AccountMeta) -> AccountResponse:
@@ -50,11 +54,36 @@ def to_account_response(account: AccountMeta) -> AccountResponse:
         last_used=account.last_used,
         auth_user=getattr(account, "auth_user", "0") or "0",
         cookie_id=cid,
+        tier=account.tier,
+        tier_checked_at=account.tier_checked_at,
+        tier_last_error=account.tier_last_error,
     )
 
 
 class UpdateAccountRequest(BaseModel):
     name: str
+
+
+@router.post("/{account_id}/detect-tier", response_model=AccountResponse)
+async def detect_account_tier(
+    account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
+    account_service: AccountService = Depends(get_account_service),
+) -> AccountResponse:
+    try:
+        account = await account_service.detect_tier(account_id)
+    except TierRefreshError as exc:
+        messages = {
+            "not_found": "账号不存在",
+            "stale": "账号凭据已变化，请重新查询",
+            "rate_limited": "上游查询限流，请稍后重试",
+            "authentication": "账号登录凭据未通过上游验证",
+            "invalid_response": "无法识别上游会员响应",
+            "unavailable": "上游会员查询暂不可用",
+            "credentials": "无法读取有效账号凭据",
+            "storage": "会员查询结果保存失败",
+        }
+        raise HTTPException(exc.status_code, detail=messages[exc.reason]) from None
+    return to_account_response(account)
 
 
 class ImportCookiesRequest(BaseModel):
