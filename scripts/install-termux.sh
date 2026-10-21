@@ -149,6 +149,7 @@ SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
 NETWORK_TMP=""
 CLONE_STAGE=""
 PART_FILE=""
+PROGRESS_PID=""
 TERMUX_PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 CHOSEN_MIRRORS="${TERMUX_PREFIX}/etc/termux/chosen_mirrors"
 CN_MIRRORS="${TERMUX_PREFIX}/etc/termux/mirrors/chinese_mainland"
@@ -156,6 +157,7 @@ MIRROR_PROMPTED=false
 
 cleanup() {
     local status=$?
+    stop_download_progress
     printf '[install] finished exit=%s\n' "${status}" >&2
     [[ -z "${NETWORK_TMP}" ]] || rm -rf -- "${NETWORK_TMP}"
     [[ -z "${CLONE_STAGE}" ]] || rm -rf -- "${CLONE_STAGE}"
@@ -166,6 +168,37 @@ trap cleanup EXIT
 network_tmp() {
     [[ -n "${TMPDIR:-}" && -w "${TMPDIR}" ]] || { echo "TMPDIR must be writable." >&2; exit 1; }
     [[ -n "${NETWORK_TMP}" ]] || NETWORK_TMP="$(mktemp -d "${TMPDIR%/}/aistudio-network.XXXXXX")"
+}
+
+# Callers pipe this script through log filters, so curl's own progress meter
+# never reaches a terminal; report the partial file's growth as plain lines.
+start_download_progress() {
+    local file="$1" interval="${AISTUDIO_DOWNLOAD_PROGRESS_INTERVAL:-10}"
+    [[ "${interval}" =~ ^[1-9][0-9]*$ ]] || interval=10
+    (
+        local previous=0 current started=${SECONDS} elapsed
+        [[ ! -f "${file}" ]] || previous=$(wc -c < "${file}")
+        while sleep "${interval}"; do
+            [[ -f "${file}" ]] || continue
+            current=$(wc -c < "${file}")
+            elapsed=$((SECONDS - started))
+            ((elapsed > 0)) || elapsed=1
+            started=${SECONDS}
+            printf '[install] Downloaded %d.%d MiB (%d.%d MiB/s).\n' \
+                $((current / 1048576)) $((current % 1048576 * 10 / 1048576)) \
+                $(((current - previous) / elapsed / 1048576)) \
+                $(((current - previous) / elapsed % 1048576 * 10 / 1048576)) >&2
+            previous=${current}
+        done
+    ) &
+    PROGRESS_PID=$!
+}
+
+stop_download_progress() {
+    [[ -n "${PROGRESS_PID}" ]] || return 0
+    kill "${PROGRESS_PID}" 2>/dev/null || true
+    wait "${PROGRESS_PID}" 2>/dev/null || true
+    PROGRESS_PID=""
 }
 
 verify_sha256() {
@@ -406,7 +439,9 @@ case "${1:-}" in
             exit 0
         fi
         network_tmp
+        start_download_progress "${PART_FILE}"
         curl_retry --max-time 1800 --speed-limit 1024 --speed-time 60 -o "${PART_FILE}" "$2"
+        stop_download_progress
         if ! verify_sha256 "${PART_FILE}" "$4"; then
             rm -f -- "${PART_FILE}"
             echo "Downloaded file failed SHA-256 verification: $3" >&2

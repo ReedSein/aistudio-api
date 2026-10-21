@@ -79,13 +79,18 @@ if mode == "abort":
 if mode == "corrupt":
     target.write_bytes(b"corrupted archive")
     sys.exit(0)
-if resumed:
+if mode == "slow":
+    import time
+    target.write_bytes(payload[: len(payload) // 2])
+    time.sleep(1.0)
+if resumed or mode == "slow":
     with target.open("ab") as handle:
         handle.write(payload[target.stat().st_size :])
 else:
     target.write_bytes(payload)
 """,
-        "sleep": "import sys; sys.exit(0)\n",
+        # Real but short: retries stay fast and progress loops cannot spin.
+        "sleep": "import sys, time; time.sleep(min(float(sys.argv[1]), 0.2))\n",
         "uv": """import os, sys
 os.execv(sys.executable, [sys.executable, *sys.argv[sys.argv.index("python") + 1:]])
 """,
@@ -151,6 +156,20 @@ def test_browser_download_resumes_across_reruns_and_cleans_archive(browser_insta
     assert not part.exists()
     assert not list((root / ".cloakbrowser/downloads").iterdir())
     assert (state / "downloads").read_text().splitlines()[-1] == "resume"
+
+
+def test_browser_download_reports_progress_until_it_finishes(browser_install):
+    root, _, env = browser_install
+    env["TEST_BROWSER_DOWNLOAD"] = "slow"
+    env["AISTUDIO_DOWNLOAD_PROGRESS_INTERVAL"] = "1"
+    result = prepare_browser(root, env)
+    assert result.returncode == 0, result.stderr
+    progress = [
+        line for line in result.stderr.splitlines() if "[install] Downloaded" in line
+    ]
+    assert progress, result.stderr
+    assert all("MiB/s" in line for line in progress)
+    assert (root / ".cloakbrowser/chromium-9.8.7.6.5/icudtl.dat").is_file()
 
 
 def test_browser_download_rejects_corrupted_digest_and_removes_part(browser_install):
