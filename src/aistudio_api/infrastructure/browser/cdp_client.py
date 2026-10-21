@@ -10,7 +10,8 @@ import asyncio
 import contextlib
 import json
 import re
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 
 import httpx
 import websockets
@@ -222,6 +223,10 @@ class CDPConnection:
         }
         try:
             await self.ws.send(json.dumps(payload))
+        except asyncio.CancelledError:
+            self._futures.pop(req_id, None)
+            fut.cancel()
+            raise
         except Exception as e:
             self._closed = True
             self._futures.pop(req_id, None)
@@ -252,8 +257,9 @@ class CDPConnection:
                 except TimeoutError:
                     if fut.done():
                         return fut.result()
-        except Exception:
+        except BaseException:
             self._futures.pop(req_id, None)
+            fut.cancel()
             raise
 
     def on(
@@ -761,6 +767,110 @@ class CDPPage:
 
         return self._track_listener(self.cdp.on("Network.responseReceived", listener))
 
+    @asynccontextmanager
+    async def capture_blocked_request(
+        self, url_pattern: str
+    ) -> AsyncIterator[asyncio.Future[dict[str, object]]]:
+        """Capture a POST before sending; abort every match until cleanup ends.
+
+        A failed or incomplete capture closes this dedicated preparation page.
+        There is no fallback that releases an unidentified request to the server.
+        """
+        captured: asyncio.Future[dict[str, object]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        pending: set[asyncio.Task[None]] = set()
+        errors: list[Exception] = []
+        succeeded = False
+
+        async def abort_request(params: dict[str, object]) -> None:
+            try:
+                request_id = params.get("requestId")
+                if not isinstance(request_id, str) or not request_id:
+                    raise RuntimeError("CDP paused request has no identifier")
+                raw = params.get("request")
+                request = raw if isinstance(raw, dict) else {}
+                try:
+                    body = request.get("postData")
+                    if not isinstance(body, str) and request.get("hasPostData"):
+                        network_id = params.get("networkId")
+                        if isinstance(network_id, str):
+                            result = await self.cdp.send(
+                                "Network.getRequestPostData",
+                                {"requestId": network_id},
+                                timeout_s=5.0,
+                            )
+                            body = result.get("postData")
+                    headers = request.get("headers")
+                    if (
+                        request.get("method") != "POST"
+                        or not isinstance(body, str)
+                        or not body
+                        or len(body) > 524288
+                    ):
+                        raise RuntimeError(
+                            "CDP bootstrap request has no supported POST body"
+                        )
+                    if not isinstance(headers, dict) or not all(
+                        isinstance(k, str) and isinstance(v, str)
+                        for k, v in headers.items()
+                    ):
+                        raise RuntimeError("CDP bootstrap request has invalid headers")
+                    template: dict[str, object] = {
+                        "url": request.get("url"),
+                        "headers": dict(headers),
+                        "post_data": body,
+                    }
+                finally:
+                    await self.cdp.send(
+                        "Fetch.failRequest",
+                        {"requestId": request_id, "errorReason": "Aborted"},
+                        timeout_s=5.0,
+                    )
+                if not captured.done():
+                    captured.set_result(template)
+            except Exception as exc:
+                errors.append(exc)
+                if not captured.done():
+                    captured.set_exception(exc)
+                await self.close()
+
+        def on_paused(params: dict[str, object]) -> None:
+            task = asyncio.create_task(
+                abort_request(params), name="abort_bootstrap_request"
+            )
+            pending.add(task)
+            task.add_done_callback(pending.discard)
+
+        unsubscribe = self._track_listener(
+            self.cdp.on("Fetch.requestPaused", on_paused)
+        )
+        try:
+            await self.cdp.send(
+                "Fetch.enable",
+                {"patterns": [{"urlPattern": url_pattern, "requestStage": "Request"}]},
+            )
+            yield captured
+            if pending:
+                await asyncio.gather(*pending)
+            if errors:
+                raise errors[0]
+            if not captured.done():
+                raise RuntimeError("CDP bootstrap request was not captured")
+            captured.result()
+            await self.cdp.send("Fetch.disable", timeout_s=5.0)
+            succeeded = True
+        finally:
+            if not succeeded:
+                await self.close()
+            unsubscribe()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            if captured.done() and not captured.cancelled():
+                captured.exception()
+            else:
+                captured.cancel()
+
     async def get_response_body(self, request_id: str) -> str:
         """Get response body for a completed request."""
         try:
@@ -795,9 +905,11 @@ class CDPPage:
             with contextlib.suppress(Exception):
                 unsub()
         self._unsubscribers.clear()
-        with contextlib.suppress(Exception):
-            await self.cdp.send("Page.close")
-        await self.cdp.close()
+        try:
+            with contextlib.suppress(Exception):
+                await self.cdp.send("Page.close", timeout_s=3.0)
+        finally:
+            await self.cdp.close()
 
 
 class CDPClient:

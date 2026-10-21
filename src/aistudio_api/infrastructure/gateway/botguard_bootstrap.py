@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from urllib.parse import urlsplit
 
 from aistudio_api.domain.errors import SessionExpiredError
 from aistudio_api.infrastructure.browser.cdp_client import CDPPage
@@ -22,6 +25,7 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 log = get_logger("session.botguard")
 
 BOTGUARD_BOOTSTRAP_PROMPT = "say '1'"
+GENERATE_CONTENT_RPC = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent"
 
 OPEN_EDITOR_JS = """(() => {
     if (document.querySelector('textarea')) return;
@@ -236,32 +240,16 @@ async def _bootstrap_attempt(
     await _wait_for_prompt(page)
     snap_key = await install_page_hooks(page)
 
-    t0 = time.time()
-    captured: dict[str, object] = {}
-
-    def on_req(req: dict[str, object]) -> None:
-        url = str(req.get("url") or "")
-        if "GenerateContent" not in url or "Count" in url or captured:
-            return
-        body = str(req.get("post_data") or "")
-        if not body:
-            return
-        captured["url"] = url
-        captured["headers"] = req.get("headers") or {}
-        captured["body"] = body
-
-    unsub = page.on_request(on_req)
-    try:
+    t0 = time.monotonic()
+    async with page.capture_blocked_request(GENERATE_CONTENT_RPC + "*") as captured:
         return await _capture_probe(
             page, captured, is_proc_alive_cb, max_wait_seconds, snap_key, t0
         )
-    finally:
-        unsub()
 
 
 async def _capture_probe(
     page: CDPPage,
-    captured: dict[str, object],
+    captured: asyncio.Future[dict[str, object]],
     is_proc_alive_cb: Callable[[], bool] | None,
     max_wait_seconds: int,
     snap_key: str,
@@ -289,6 +277,8 @@ async def _capture_probe(
             )
 
         for i in range(max_wait_seconds):
+            if captured.done():
+                captured.result()
             if is_proc_alive_cb and not is_proc_alive_cb():
                 raise RuntimeError("Browser process died during BotGuard capture")
             if page.is_closed():
@@ -308,9 +298,9 @@ async def _capture_probe(
             if await page.evaluate("() => !!window.__AISTUDIO__?.service"):
                 with suppress(Exception):
                     await page.evaluate(STOP_GENERATION_JS)
-                if not captured:
+                if not captured.done():
                     for _ in range(25):
-                        if captured:
+                        if captured.done():
                             break
                         await page.wait_for_timeout(100)
 
@@ -318,19 +308,49 @@ async def _capture_probe(
                 with suppress(Exception):
                     await page.evaluate(DOM_GC_CLEANUP_JS)
 
-                if not captured:
+                if not captured.done():
                     raise RuntimeError(
                         "BotGuard service captured but wire template missing"
                     )
 
+                request = captured.result()
+                url = request.get("url")
+                expected = urlsplit(GENERATE_CONTENT_RPC)
+                if (
+                    not isinstance(url, str)
+                    or urlsplit(url)._replace(query="", fragment="") != expected
+                ):
+                    raise RuntimeError(
+                        "BotGuard wire template has an unexpected RPC URL"
+                    )
+                body = request.get("post_data")
+                if not isinstance(body, str):
+                    raise RuntimeError("BotGuard wire template body is missing")
+                try:
+                    payload = json.loads(body)
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError("BotGuard wire template is not JSON") from exc
+                if (
+                    not isinstance(payload, list)
+                    or not payload
+                    or not isinstance(payload[0], str)
+                ):
+                    raise RuntimeError("BotGuard wire template is not a model request")
+
                 log.info(
                     "BotGuard 握手成功并截获模板，耗时 %d 秒 (累计 %.1f 秒)",
                     i + 1,
-                    time.time() - t0,
+                    time.monotonic() - t0,
                 )
-                return snap_key, captured
+                return snap_key, {
+                    "url": request["url"],
+                    "headers": request["headers"],
+                    "body": body,
+                }
 
         raise RuntimeError(f"BotGuardService capture timeout after {max_wait_seconds}s")
     finally:
+        with suppress(Exception):
+            await page.evaluate(STOP_GENERATION_JS)
         with suppress(Exception):
             await page.fill("textarea", original_text)

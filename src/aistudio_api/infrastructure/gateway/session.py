@@ -23,6 +23,7 @@ from aistudio_api.infrastructure.browser.scripts import (
 )
 from aistudio_api.infrastructure.gateway.botguard_bootstrap import (
     BOTGUARD_BOOTSTRAP_PROMPT,
+    GENERATE_CONTENT_RPC,
     bootstrap_botguard_and_template,
 )
 from aistudio_api.infrastructure.gateway.readiness import preparing
@@ -50,7 +51,7 @@ log = get_logger("session")
 _is_login_page_url = is_login_page_url
 
 DEFAULT_BOOTSTRAP_TEMPLATE: dict[str, object] = {
-    "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
+    "url": GENERATE_CONTENT_RPC,
     "headers": {
         "Content-Type": "application/json+protobuf",
         "X-User-Agent": "grpc-web-javascript/0.1",
@@ -161,11 +162,11 @@ class BrowserSession:
             finally:
                 self._preparation_waiters -= 1
                 if self._preparation_waiters == 0:
+                    if self._preparation_task is task:
+                        self._preparation_task = None
                     if not task.done():
                         task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
-                    if self._preparation_task is task:
-                        self._preparation_task = None
 
     async def ensure_context(self) -> CDPPage:
         """Ensure active verified CDPPage is available, auto-reconnecting if dropped."""

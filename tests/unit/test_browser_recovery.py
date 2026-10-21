@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -85,7 +86,10 @@ async def test_generation_survives_transient_recovery_failure(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("initial_login", [False, True])
-async def test_login_recovery_reinstalls_and_captures(monkeypatch, initial_login):
+@pytest.mark.parametrize("query", ["", "?fixture=1"])
+async def test_login_recovery_reinstalls_and_captures(
+    monkeypatch, initial_login, query
+):
     page = MagicMock(spec=CDPPage)
     page.url = (
         "https://accounts.google.com/ServiceLogin"
@@ -96,14 +100,16 @@ async def test_login_recovery_reinstalls_and_captures(monkeypatch, initial_login
     page.wait_for_selector = AsyncMock()
     page.wait_for_timeout = AsyncMock()
     page.fill = AsyncMock()
-    callback = None
+    captured = None
 
-    def on_request(cb):
-        nonlocal callback
-        callback = cb
-        return MagicMock()
+    @asynccontextmanager
+    async def intercept(pattern):
+        nonlocal captured
+        assert pattern == bg.GENERATE_CONTENT_RPC + "*"
+        captured = asyncio.get_running_loop().create_future()
+        yield captured
 
-    page.on_request.side_effect = on_request
+    page.capture_blocked_request = intercept
 
     async def evaluate(expr, *args, **kwargs):
         return (
@@ -119,12 +125,12 @@ async def test_login_recovery_reinstalls_and_captures(monkeypatch, initial_login
         return True
 
     async def click(p):
-        assert callback is not None
-        callback(
+        assert captured is not None
+        captured.set_result(
             {
-                "url": "https://example.invalid/GenerateContent",
+                "url": bg.GENERATE_CONTENT_RPC + query,
                 "headers": {},
-                "post_data": "[]",
+                "post_data": '["models/gemini-fixture",[]]',
             }
         )
         return True
@@ -138,7 +144,7 @@ async def test_login_recovery_reinstalls_and_captures(monkeypatch, initial_login
         page, reload_cookies_cb=reload
     )
     assert key == "fixture-key"
-    assert template["body"] == "[]"
+    assert template["body"] == '["models/gemini-fixture",[]]'
     assert reload.await_count == int(initial_login)
     hooks.assert_awaited_once()
 
@@ -212,6 +218,45 @@ async def test_last_cancelled_waiter_cleans_up_preparation():
         await waiter
     assert cleaned.is_set()
     assert session._preparation_task is None
+
+
+@pytest.mark.asyncio
+async def test_new_waiter_never_inherits_a_cancelled_preparation():
+    session = BrowserSession(9222)
+    started = asyncio.Event()
+    cleaning = asyncio.Event()
+    release = asyncio.Event()
+    page = MagicMock(spec=CDPPage)
+    page.is_closed.return_value = False
+    context = SessionContext(page, "key", "0", None, {})
+    calls = 0
+
+    async def transition(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaning.set()
+                await release.wait()
+        session.set_ready_context(context)
+        return context
+
+    session.transition_to_account = AsyncMock(side_effect=transition)
+    first = asyncio.create_task(session.ensure_ready())
+    await started.wait()
+    first.cancel()
+    await cleaning.wait()
+    second = asyncio.create_task(session.ensure_ready())
+    try:
+        assert await asyncio.wait_for(second, 1) is context
+        assert calls == 2
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
 
 
 @pytest.mark.asyncio
