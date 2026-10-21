@@ -148,7 +148,8 @@ class Installation:
     def process_file(self) -> Path:
         return self.state_dir / "service.json"
 
-    def register(self) -> Path:
+    def register(self, config_source: Path | None = None) -> Path:
+        """Create the entry point; first registration copies config_source."""
         record = self.config_dir / "installation.json"
         if record.exists() and read_object(record).get("project_root") != str(
             self.root
@@ -168,9 +169,7 @@ class Installation:
         if not uv or not shell:
             raise ManagerError("找不到 uv 或 sh，请先运行环境准备脚本。")
         if not self.config_file.exists():
-            source = Path(
-                os.getenv("AISTUDIO_CONFIG_FILE", str(self.root / "config.yaml"))
-            )
+            source = config_source or self.root / "config.yaml"
             atomic_write(self.config_file, source.read_bytes())
         command = shlex.join(
             [

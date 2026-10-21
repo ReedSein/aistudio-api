@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -82,6 +83,52 @@ def test_register_preserves_configuration_and_quotes_paths(installation):
     loaded = Installation.load()
     assert loaded.root == installation.root
     assert loaded.proot_name == "aistudio-api-termux"
+
+
+def _run_manager_register(installation, tmp_path, inherited_config=None):
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("AISTUDIO_")
+    }
+    env.update(
+        HOME=str(tmp_path / "home"),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        XDG_STATE_HOME=str(tmp_path / "state"),
+        AISTUDIO_LOG_DIR=str(tmp_path / "logs"),
+    )
+    if inherited_config is not None:
+        env["AISTUDIO_CONFIG_FILE"] = str(inherited_config)
+    return subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[2] / "scripts/termux_manager.py"),
+            "--register",
+            "--stable",
+            "--project-root",
+            str(installation.root),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_first_registration_through_the_manager_copies_project_config(
+    installation, tmp_path
+):
+    result = _run_manager_register(installation, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert installation.config_file.read_text() == "api_keys: []\n"
+
+
+def test_first_registration_imports_an_inherited_config_file(installation, tmp_path):
+    inherited = tmp_path / "previous.yaml"
+    inherited.write_text("user_setting: imported\n")
+    result = _run_manager_register(installation, tmp_path, inherited)
+    assert result.returncode == 0, result.stderr
+    assert installation.config_file.read_text() == "user_setting: imported\n"
 
 
 def test_legacy_registration_keeps_the_original_container(installation):

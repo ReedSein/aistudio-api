@@ -206,6 +206,8 @@ def main() -> int:
         parser.error("--dev / --stable 只用于 --install 或 --register")
     try:
         installation = Installation.load(args.project_root, args.port, args.development)
+        # Read before the override below points it at the installation's own copy.
+        inherited_config = os.environ.get("AISTUDIO_CONFIG_FILE")
         os.environ.setdefault("AISTUDIO_LOG_DIR", str(installation.state_dir / "logs"))
         os.environ["AISTUDIO_CONFIG_FILE"] = str(installation.config_file)
         os.environ["AISTUDIO_PROOT_NAME"] = installation.proot_name
@@ -220,7 +222,9 @@ def main() -> int:
                             "服务正在运行，请先停止或使用菜单中的一键更新。"
                         )
                     Updater(installation).prepare()
-                entry = installation.register()
+                entry = installation.register(
+                    Path(inherited_config) if inherited_config else None
+                )
             print(f"已登记 {installation.root}\n启动命令：{entry}")
         elif args.uninstall:
             with operation_lock(installation):
