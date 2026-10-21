@@ -771,8 +771,9 @@ class CDPPage:
     async def capture_blocked_request(
         self, url_pattern: str
     ) -> AsyncIterator[asyncio.Future[dict[str, object]]]:
-        """Capture a POST before sending; abort every match until cleanup ends.
+        """Capture a POST before sending; abort every POST until cleanup ends.
 
+        A valid CORS preflight can proceed so the browser exposes the actual POST.
         A failed or incomplete capture closes this dedicated preparation page.
         There is no fallback that releases an unidentified request to the server.
         """
@@ -790,6 +791,27 @@ class CDPPage:
                     raise RuntimeError("CDP paused request has no identifier")
                 raw = params.get("request")
                 request = raw if isinstance(raw, dict) else {}
+                headers = request.get("headers")
+                if (
+                    request.get("method") == "OPTIONS"
+                    and not request.get("hasPostData")
+                    and request.get("postData") in (None, "")
+                    and isinstance(headers, dict)
+                    and all(
+                        isinstance(k, str) and isinstance(v, str)
+                        for k, v in headers.items()
+                    )
+                ):
+                    preflight_headers = {k.lower(): v for k, v in headers.items()}
+                    if preflight_headers.get(
+                        "access-control-request-method"
+                    ) == "POST" and preflight_headers.get("origin"):
+                        await self.cdp.send(
+                            "Fetch.continueRequest",
+                            {"requestId": request_id},
+                            timeout_s=5.0,
+                        )
+                        return
                 try:
                     body = request.get("postData")
                     if not isinstance(body, str) and request.get("hasPostData"):
@@ -801,7 +823,6 @@ class CDPPage:
                                 timeout_s=5.0,
                             )
                             body = result.get("postData")
-                    headers = request.get("headers")
                     if (
                         request.get("method") != "POST"
                         or not isinstance(body, str)

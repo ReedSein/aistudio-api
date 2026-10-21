@@ -65,6 +65,52 @@ async def test_capture_is_published_after_abort_and_all_matches_are_blocked(
 
 
 @pytest.mark.asyncio
+async def test_cors_preflight_does_not_replace_or_release_the_post(interception_page):
+    page, connection, listeners = interception_page
+    async with page.capture_blocked_request("*") as captured:
+        event = request(None)
+        event["request"]["method"] = "OPTIONS"
+        event["request"]["headers"] = {
+            "Origin": "https://example.invalid",
+            "Access-Control-Request-Method": "POST",
+        }
+        listeners["Fetch.requestPaused"](event)
+        await asyncio.sleep(0)
+        assert not captured.done()
+        assert connection.send.call_args.args[0] == "Fetch.continueRequest"
+        listeners["Fetch.requestPaused"](request("actual POST"))
+        assert (await asyncio.wait_for(captured, 1))["post_data"] == "actual POST"
+    assert [call.args[0] for call in connection.send.call_args_list] == [
+        "Fetch.enable",
+        "Fetch.continueRequest",
+        "Fetch.failRequest",
+        "Fetch.disable",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", [None, "GET"])
+async def test_unrecognized_options_is_aborted_instead_of_continued(
+    interception_page, method
+):
+    page, connection, listeners = interception_page
+    with pytest.raises(RuntimeError, match="supported POST body"):
+        async with page.capture_blocked_request("*") as captured:
+            event = request(None)
+            event["request"]["method"] = "OPTIONS"
+            event["request"]["headers"] = {
+                "Origin": "https://example.invalid",
+                "Access-Control-Request-Method": method,
+            }
+            listeners["Fetch.requestPaused"](event)
+            await asyncio.wait_for(captured, 1)
+    assert "Fetch.continueRequest" not in [
+        call.args[0] for call in connection.send.call_args_list
+    ]
+    assert page.is_closed()
+
+
+@pytest.mark.asyncio
 async def test_omitted_post_data_is_read_before_aborting(interception_page):
     page, connection, listeners = interception_page
     connection.send.side_effect = lambda method, *args, **kwargs: (
