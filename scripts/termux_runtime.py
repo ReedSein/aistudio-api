@@ -24,6 +24,20 @@ from termux_diagnostics import get_store
 
 Mode = Literal["foreground", "silent"]
 ENTRY_MARKER = "# Managed by aistudio-api Termux manager."
+ENTRY_NAME = "aistudio"
+# Short aliases are optional: a name owned by another program is left alone.
+ENTRY_ALIASES = ("aisu",)
+
+
+def entry_path(name: str) -> Path:
+    return Path.home() / ".local/bin" / name
+
+
+def entry_is_foreign(path: Path) -> bool:
+    """A symlink or an existing file not written by this manager."""
+    return path.is_symlink() or (path.exists() and ENTRY_MARKER not in path.read_text())
+
+
 DEFAULT_PROOT_NAME = "aistudio-api-termux"
 LEGACY_PROOT_NAME = "aistudio-api"
 PROOT_NAME_PATTERN = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]*")
@@ -159,10 +173,8 @@ class Installation:
             previous = Installation.load()
             if previous.port != self.port and Service(previous).running():
                 raise ManagerError("请先停止服务，再更改端口。")
-        entry = Path.home() / ".local/bin/aistudio"
-        if entry.is_symlink() or (
-            entry.exists() and ENTRY_MARKER not in entry.read_text()
-        ):
+        entry = entry_path(ENTRY_NAME)
+        if entry_is_foreign(entry):
             raise ManagerError(f"已有其他命令占用：{entry}")
         uv = shutil.which("uv")
         shell = shutil.which("sh")
@@ -183,18 +195,23 @@ class Installation:
                 str(self.root / "scripts/termux_manager.py"),
             ]
         )
-        atomic_write(
-            entry,
-            (
-                f"#!{shell}\n{ENTRY_MARKER}\n"
-                'if [ "${1:-}" = "--export-logs" ]; then\n'
-                "  shift\n"
-                f'  exec {shlex.quote(shutil.which("bash") or "bash")} {shlex.quote(str(self.root / "scripts/export-diagnostics.sh"))} "$@"\n'
-                "fi\n"
-                f'exec {command} "$@"\n'
-            ).encode(),
-            0o755,
-        )
+        script = (
+            f"#!{shell}\n{ENTRY_MARKER}\n"
+            'if [ "${1:-}" = "--export-logs" ]; then\n'
+            "  shift\n"
+            f'  exec {shlex.quote(shutil.which("bash") or "bash")} {shlex.quote(str(self.root / "scripts/export-diagnostics.sh"))} "$@"\n'
+            "fi\n"
+            f'exec {command} "$@"\n'
+        ).encode()
+        atomic_write(entry, script, 0o755)
+        for alias in ENTRY_ALIASES:
+            alias_entry = entry_path(alias)
+            if entry_is_foreign(alias_entry):
+                print(
+                    f"{alias} 已被其他命令占用（{alias_entry}），未创建别名，请继续使用 {ENTRY_NAME}。"
+                )
+                continue
+            atomic_write(alias_entry, script, 0o755)
         write_object(
             record,
             {

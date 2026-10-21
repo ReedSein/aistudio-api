@@ -8,10 +8,14 @@ from pathlib import Path
 
 from termux_diagnostics import get_store
 from termux_runtime import (
+    ENTRY_ALIASES,
     ENTRY_MARKER,
+    ENTRY_NAME,
     Installation,
     ManagerError,
     Service,
+    entry_is_foreign,
+    entry_path,
     read_object,
 )
 from termux_update import Updater
@@ -25,7 +29,7 @@ class Uninstaller:
     def __init__(self, installation: Installation, *, clear_data: bool = False) -> None:
         self.installation = installation
         self.clear_data = clear_data
-        self.entry = Path.home() / ".local/bin/aistudio"
+        self.entry = entry_path(ENTRY_NAME)
 
     def paths(self) -> list[Path]:
         installation = self.installation
@@ -42,6 +46,14 @@ class Uninstaller:
         ):
             raise ManagerError(f"命令入口不属于此安装：{self.entry}")
         paths = [root / ".venv", root / ".cloakbrowser", self.entry]
+        # Aliases skipped at registration may belong to another program.
+        paths.extend(
+            alias
+            for alias in map(entry_path, ENTRY_ALIASES)
+            if not entry_is_foreign(alias)
+            and alias.exists()
+            and shlex.quote(str(root)) in alias.read_text()
+        )
         if not installation.development:
             updater = Updater(installation)
             updater.verify_checkout()
@@ -113,7 +125,7 @@ class Uninstaller:
                 f"删除程序文件和 Git 目录：{installation.root}（保留未接管的本地文件）"
             )
         print(
-            f"删除运行环境、浏览器缓存及命令入口：{installation.root / '.venv'}、{installation.root / '.cloakbrowser'}、{self.entry}"
+            f"删除运行环境、浏览器缓存及命令入口：{installation.root / '.venv'}、{installation.root / '.cloakbrowser'}、{self.entry}（及本安装的 {'、'.join(ENTRY_ALIASES)} 别名）"
         )
         if self.clear_data:
             print("清除以下配置与数据，删除后无法恢复：")

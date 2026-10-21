@@ -631,7 +631,7 @@ printf 'Preparing Termux installation: %s\n' "${PROJECT_ROOT}"
 MODE=--stable
 [[ "${DEVELOPMENT}" == false ]] || MODE=--dev
 uv run --no-project --no-python-downloads python scripts/termux_manager.py --install "${MODE}" --project-root "${PROJECT_ROOT}"
-printf '\nInstallation complete. Run: aistudio\n'
+printf '\nInstallation complete. Run: aistudio (or the short alias: aisu)\n'
 case ":${PATH}:" in
     *":${HOME}/.local/bin:"*) ;;
     *) printf 'If the command is not found, run: %s/.local/bin/aistudio\nAdd ~/.local/bin to PATH in your shell configuration.\n' "${HOME}" ;;

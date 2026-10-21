@@ -91,7 +91,7 @@ aistudio
 ## 管理菜单
 
 ```bash
-aistudio
+aistudio   # 或简写 aisu
 ```
 
 - **普通启动**：前台显示日志，Ctrl+C 停止并返回菜单。

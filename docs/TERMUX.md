@@ -126,7 +126,7 @@ bash "$install_tmp/install-termux.sh" "$@"
 ## 管理菜单
 
 ```bash
-aistudio
+aistudio   # 或简写 aisu
 ```
 
 | 操作 | 行为 |
@@ -152,7 +152,7 @@ aistudio --register --port 11451
 
 退出菜单会保留已启动的静默服务。Android 仍可能清理后台进程；本工具不会自动更改系统电池策略或设置开机自启。
 
-`aistudio` 入口位于 `~/.local/bin/aistudio`。若当前 shell 没有将此目录加入 PATH，可直接使用该完整路径启动。
+`aistudio` 入口位于 `~/.local/bin/aistudio`，登记时同时创建内容相同的简写 `aisu`；`aisu` 已被其他程序占用时跳过并提示，`aistudio` 不受影响。若当前 shell 没有将此目录加入 PATH，可直接使用该完整路径启动。
 
 ## 配置与数据
 
@@ -214,7 +214,7 @@ aistudio --uninstall --clear-data
 
 卸载会先显示范围，输入 `UNINSTALL` 才执行；取消不会停止服务。确认后核对并停止属于此安装的服务，再删除文件。
 
-- 两种卸载都会移除项目的 `.venv/`、`.cloakbrowser/`、`aistudio` 命令入口和管理器的进程／更新记录。
+- 两种卸载都会移除项目的 `.venv/`、`.cloakbrowser/`、`aistudio` 命令入口（及本安装创建的 `aisu`）和管理器的进程／更新记录。
 - 普通安装额外删除 Git 跟踪的程序文件及项目 `.git`；未接管的本地文件保留，存在源码修改或仅保存在本地的提交／暂存工作时停止卸载。开发用法保留所有源码、未提交修改及 Git 记录。
 - 默认保留独立配置、安装路径登记，以及项目的 `data/`、`dumps/`、`server-logs/` 和 `.env`。在原安装位置重跑同一种安装命令，可以继续使用这些配置和数据。
 - 清除数据选项额外删除上述项目内数据，以及管理器的 `config.yaml` 和 `installation.json`。删除不可自动恢复；开发工作区中作为源码保留的配置模板不受影响。

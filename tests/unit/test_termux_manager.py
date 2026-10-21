@@ -169,6 +169,34 @@ def test_register_refuses_an_unrelated_command(installation):
     assert entry.read_text() == "unrelated command"
 
 
+def test_register_creates_the_aisu_alias_with_the_same_entry(installation):
+    entry = installation.register()
+    alias = Path.home() / ".local/bin/aisu"
+    assert alias.read_text() == entry.read_text()
+    assert alias.stat().st_mode & 0o777 == 0o755
+
+
+def test_register_skips_an_aisu_owned_by_another_program(installation, capsys):
+    alias = Path.home() / ".local/bin/aisu"
+    alias.parent.mkdir(parents=True)
+    alias.write_text("another program")
+    entry = installation.register()
+    assert entry.exists()
+    assert alias.read_text() == "another program"
+    assert "未创建别名" in capsys.readouterr().out
+
+
+def test_uninstall_leaves_an_aisu_owned_by_another_program(installation, monkeypatch):
+    target = prepare_uninstall(installation)
+    alias = Path.home() / ".local/bin/aisu"
+    alias.write_text("another program")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "UNINSTALL")
+    with operation_lock(target):
+        assert Uninstaller(target).run()
+    assert not (Path.home() / ".local/bin/aistudio").exists()
+    assert alias.read_text() == "another program"
+
+
 def test_silent_start_is_ready_and_stop_only_owns_its_process(installation, capfd):
     installation.register()
     service = Service(installation)
@@ -609,6 +637,7 @@ def test_uninstall_keeps_data_and_development_source(
     assert (target.config_dir / "installation.json").exists()
     assert (target.root / "personal-notes.md").exists()
     assert not (Path.home() / ".local/bin/aistudio").exists()
+    assert not (Path.home() / ".local/bin/aisu").exists()
     assert not (target.root / ".venv").exists()
     assert not (target.root / ".cloakbrowser").exists()
     assert (target.root / "main.py").exists() == development
