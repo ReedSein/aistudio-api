@@ -67,12 +67,14 @@ async def lifespan(_app: FastAPI):
 
     # 初始化账号管理服务
     account_store = AccountStore()
-    account_service = AccountService(account_store)
-    runtime_state.account_service = account_service
+    account_store.reconcile_legacy_metadata()
 
     # 初始化黏性账号调度器
     rotator = init_rotator(account_store)
     runtime_state.rotator = rotator
+    account_service = AccountService(account_store, rotator)
+    runtime_state.account_service = account_service
+    client.session.bind_account_store(account_store)
 
     logger.info(
         "Client initialized (port=%s, accounts=%d)",

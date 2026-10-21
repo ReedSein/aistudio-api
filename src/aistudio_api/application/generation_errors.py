@@ -37,6 +37,7 @@ async def _switch_account(
     failed_account_id: str | None,
     is_auth_error: bool = False,
     is_session_expired: bool = False,
+    failed_credential_version: str | None = None,
 ) -> bool:
     async with preparing():
         return await try_switch_account(
@@ -44,6 +45,7 @@ async def _switch_account(
             failed_account_id=failed_account_id,
             is_auth_error=is_auth_error,
             is_session_expired=is_session_expired,
+            failed_credential_version=failed_credential_version,
         )
 
 
@@ -73,6 +75,8 @@ async def _classify_attempt_exception(
     normalized_model: str | None,
     client: AIStudioClient,
     has_yielded_data: bool = False,
+    attempt_account_id: str | None = None,
+    attempt_account_version: str | None = None,
 ) -> bool:
     """Handle per-attempt error classification and account switching.
 
@@ -81,7 +85,25 @@ async def _classify_attempt_exception(
     target_model = normalized_model or model_path
     account_svc = runtime_state.account_service
     active_acc = account_svc.get_active_account() if account_svc else None
-    failed_id = active_acc.id if active_acc else None
+    failed_id = attempt_account_id or (active_acc.id if active_acc else None)
+
+    if (
+        isinstance(exc, AuthError)
+        and account_svc
+        and failed_id
+        and attempt_account_version is not None
+    ):
+        current = account_svc.get_account(failed_id)
+        if current is None or current.credential_version != attempt_account_version:
+            if not has_yielded_data and attempt < MAX_RETRIES - 1:
+                return True
+            raise HTTPException(
+                409,
+                detail={
+                    "message": "Account credentials changed during request",
+                    "type": "conflict",
+                },
+            ) from exc
 
     if isinstance(exc, HTTPException):
         raise exc
@@ -99,6 +121,7 @@ async def _classify_attempt_exception(
             failed_account_id=failed_id,
             is_auth_error=True,
             is_session_expired=True,
+            failed_credential_version=attempt_account_version,
         ):
             logger.info(
                 "已切换至其他可用健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES
@@ -115,9 +138,12 @@ async def _classify_attempt_exception(
     if isinstance(exc, AuthError):
         logger.warning("账号 403 权限拒绝: %s", exc)
         client.clear_templates()
-        record_rotator_event("auth_error", model=target_model)
+        record_rotator_event("auth_error", model=target_model, account_id=failed_id)
         if not has_yielded_data and await _switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=True
+            model=target_model,
+            failed_account_id=failed_id,
+            is_auth_error=True,
+            failed_credential_version=attempt_account_version,
         ):
             logger.info("切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
@@ -127,7 +153,9 @@ async def _classify_attempt_exception(
 
     if isinstance(exc, UsageLimitExceeded):
         runtime_state.record(target_model, "rate_limited")
-        record_rotator_event("rate_limited", model=target_model, scope=exc.scope)
+        record_rotator_event(
+            "rate_limited", model=target_model, scope=exc.scope, account_id=failed_id
+        )
         if not has_yielded_data and await _switch_account(
             model=target_model, failed_account_id=failed_id
         ):
@@ -216,14 +244,14 @@ async def _classify_attempt_exception(
 
     if isinstance(exc, AistudioError):
         runtime_state.record(target_model, "errors")
-        record_rotator_event("error", model=target_model)
+        record_rotator_event("error", model=target_model, account_id=failed_id)
         logger.warning("Gemini 服务端异常: %s", exc)
         raise HTTPException(
             500, detail={"message": str(exc), "type": "server_error"}
         ) from exc
 
     runtime_state.record(target_model, "errors")
-    record_rotator_event("error", model=target_model)
+    record_rotator_event("error", model=target_model, account_id=failed_id)
     logger.error("Gemini 未知严重异常: %s", exc)
     logger.debug("Gemini 异常堆栈详情:", exc_info=True)
     raise HTTPException(
@@ -239,6 +267,8 @@ async def handle_attempt_exception(
     normalized_model: str | None,
     client: AIStudioClient,
     has_yielded_data: bool = False,
+    attempt_account_id: str | None = None,
+    attempt_account_version: str | None = None,
 ) -> bool:
     """Keep transient recovery failures inside the caller's bounded attempt loop."""
     try:
@@ -251,6 +281,8 @@ async def handle_attempt_exception(
             normalized_model=normalized_model,
             client=client,
             has_yielded_data=has_yielded_data,
+            attempt_account_id=attempt_account_id,
+            attempt_account_version=attempt_account_version,
         )
     except PreparationTimeout as timeout:
         raise HTTPException(

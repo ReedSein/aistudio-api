@@ -98,7 +98,11 @@ async def test_session_blue_green_transition_preserves_inflight():
 
     mock_cdp = MagicMock(spec=CDPClient)
     mock_cdp.create_new_page = AsyncMock(return_value=new_page)
-    mock_cdp.close_target = AsyncMock()
+
+    async def close_page(page):
+        await page.close()
+
+    mock_cdp.close_page = AsyncMock(side_effect=close_page)
     session._cdp_client = mock_cdp
 
     # Setup old active context with in_flight = 1 (a request is actively reading)
@@ -115,15 +119,26 @@ async def test_session_blue_green_transition_preserves_inflight():
 
     # Mock bootstrap functions
     from unittest.mock import patch
+
     with (
-        patch("aistudio_api.infrastructure.gateway.session.load_cookies_to_page", AsyncMock(return_value=True)),
-        patch("aistudio_api.infrastructure.gateway.session.navigate_to_aistudio", AsyncMock()),
+        patch(
+            "aistudio_api.infrastructure.gateway.session.load_cookies_to_page",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "aistudio_api.infrastructure.gateway.session.navigate_to_aistudio",
+            AsyncMock(),
+        ),
         patch(
             "aistudio_api.infrastructure.gateway.session.bootstrap_botguard_and_template",
-            AsyncMock(return_value=("snap_new", {"body": '["models/gemini-3.8-flash"]'})),
+            AsyncMock(
+                return_value=("snap_new", {"body": '["models/gemini-3.8-flash"]'})
+            ),
         ),
     ):
-        new_ctx = await session.transition_to_account("/data/acc2.json", force_refresh=True)
+        new_ctx = await session.transition_to_account(
+            "/data/acc2.json", force_refresh=True
+        )
 
     # 1. New page is created and becomes active context
     assert new_ctx.page == new_page
@@ -140,5 +155,51 @@ async def test_session_blue_green_transition_preserves_inflight():
 
     # Now old page is cleanly closed and closed on CDP
     old_page.close.assert_called_once()
-    mock_cdp.close_target.assert_called_once_with("page_tab_1")
+    mock_cdp.close_page.assert_called_once_with(old_page)
     assert old_ctx not in session._retiring_contexts
+
+
+def test_new_request_resets_a_previously_drained_event():
+    page = MagicMock(spec=CDPPage)
+    ctx = SessionContext(page, "key", "0", None, {})
+    ctx.incr_in_flight()
+    ctx.decr_in_flight()
+    assert ctx.drain_event.is_set()
+    ctx.incr_in_flight()
+    assert not ctx.drain_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_failed_transition_keeps_old_ready_identity():
+    session = BrowserSession(9222)
+    session._auth_file = "/fixture/old/auth.json"
+    session._proc = MagicMock()
+    session._proc.is_alive.return_value = True
+    page = MagicMock(spec=CDPPage)
+    page.is_closed.return_value = False
+    old = SessionContext(page, "old", "0", session._auth_file, {})
+    session.set_ready_context(old)
+    client = MagicMock(spec=CDPClient)
+    client.create_new_page = AsyncMock(
+        side_effect=RuntimeError("fixture isolation failed")
+    )
+    session._cdp_client = client
+    with pytest.raises(RuntimeError, match="isolation failed"):
+        await session.switch_auth("/fixture/new/auth.json")
+    assert session.is_ready and session.active_context is old
+    assert session._auth_file == "/fixture/old/auth.json"
+    client.close_page.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_request_queued_during_manual_switch_uses_completed_switch():
+    session = BrowserSession(9222)
+    page = MagicMock(spec=CDPPage)
+    page.is_closed.return_value = False
+    new = SessionContext(page, "new", "1", "/fixture/new/auth.json", {})
+    async with session._transition_lock:
+        session._gate.set_preparing()
+        waiter = asyncio.create_task(session.ensure_ready())
+        await asyncio.sleep(0)
+        session.set_ready_context(new)
+    assert await asyncio.wait_for(waiter, 1) is new

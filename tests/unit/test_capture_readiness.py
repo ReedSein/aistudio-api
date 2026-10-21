@@ -17,14 +17,16 @@ from aistudio_api.infrastructure.gateway.session import BrowserSession
 async def test_capture_waits_for_ready_session_before_capture_template():
     session = MagicMock(spec=BrowserSession)
     ready = False
+    ready_context = MagicMock(context_id=1)
 
     async def fake_ensure_ready(timeout_s: float = 60.0):
         nonlocal ready
         ready = True
-        return MagicMock()
+        return ready_context
 
-    async def fake_capture_template(model: str):
+    async def fake_capture_template(model: str, *, context):
         assert ready, "capture_template must run after the session is ready"
+        assert context is ready_context
         return {
             "url": "https://example.com/generate",
             "headers": {"content-type": "application/json"},

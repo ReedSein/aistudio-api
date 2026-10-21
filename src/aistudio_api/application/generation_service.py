@@ -54,8 +54,10 @@ def _parameters(req: NormalizedGeminiRequest) -> dict[str, Any]:
     }
 
 
-def _success(model: str, usage: dict[str, object] | None) -> None:
-    record_rotator_event("success", model=model)
+def _success(
+    model: str, usage: dict[str, object] | None, account_id: str | None = None
+) -> None:
+    record_rotator_event("success", model=model, account_id=account_id)
     runtime_state.record(model, "success", usage)
     logger.info("生成完成: model=%s, usage=%s", model, usage)
 
@@ -83,7 +85,17 @@ async def _generate_content(
     client: AIStudioClient,
 ) -> tuple[NormalizedGeminiRequest, ModelOutput]:
     last_error: Exception | None = None
+    account_id: str | None = None
+    account_version: str | None = None
+
+    def bind_account(value: str | None, version: str) -> None:
+        nonlocal account_id, account_version
+        account_id = value
+        account_version = version
+
     for attempt in range(MAX_RETRIES):
+        account_id = None
+        account_version = None
         normalized = None
         try:
             normalized = normalize_gemini_request(req, model_path)
@@ -95,7 +107,9 @@ async def _generate_content(
                 len(req.contents),
                 attempt + 1,
             )
-            output = await client.generate_content(**_parameters(normalized))
+            output = await client.generate_content(
+                **_parameters(normalized), on_account=bind_account
+            )
             if (
                 not output.candidates
                 or output.candidates[0].finish_reason in UNFINISHED_REASONS
@@ -103,7 +117,7 @@ async def _generate_content(
                 raise RequestError(
                     502, "Upstream response ended without a finish reason"
                 )
-            _success(normalized.model, output.usage)
+            _success(normalized.model, output.usage, account_id)
             return normalized, output
         except Exception as exc:
             last_error = exc
@@ -113,6 +127,8 @@ async def _generate_content(
                 model_path=model_path,
                 normalized_model=normalized.model if normalized else None,
                 client=client,
+                attempt_account_id=account_id,
+                attempt_account_version=account_version,
             ):
                 continue
             raise
@@ -125,7 +141,17 @@ async def _stream_content(
     client: AIStudioClient,
 ) -> AsyncGenerator[tuple[str, object], None]:
     last_error: Exception | None = None
+    account_id: str | None = None
+    account_version: str | None = None
+
+    def bind_account(value: str | None, version: str) -> None:
+        nonlocal account_id, account_version
+        account_id = value
+        account_version = version
+
     for attempt in range(MAX_RETRIES):
+        account_id = None
+        account_version = None
         normalized = None
         emitted = False
         completed = False
@@ -139,7 +165,9 @@ async def _stream_content(
             yield "model", normalized.model
             async with aclosing(
                 client.stream_generate_content(
-                    **_parameters(normalized), force_refresh_capture=attempt > 0
+                    **_parameters(normalized),
+                    force_refresh_capture=attempt > 0,
+                    on_account=bind_account,
                 )
             ) as events:
                 async for kind, value in events:
@@ -157,7 +185,7 @@ async def _stream_content(
                     502,
                     "Upstream stream ended without a finish reason or completion marker",
                 )
-            _success(normalized.model, usage)
+            _success(normalized.model, usage, account_id)
             return
         except Exception as exc:
             last_error = exc
@@ -168,6 +196,8 @@ async def _stream_content(
                 normalized_model=normalized.model if normalized else None,
                 client=client,
                 has_yielded_data=emitted,
+                attempt_account_id=account_id,
+                attempt_account_version=account_version,
             ):
                 continue
             raise

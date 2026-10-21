@@ -29,10 +29,16 @@ class SessionContext:
     auth_user: str
     auth_file: str | None
     base_template: dict[str, object]
+    account_id: str | None = None
+    credential_version: str = ""
     context_id: int = field(default_factory=itertools.count(1).__next__)
     created_at: float = field(default_factory=time.time)
     in_flight: int = 0
     drain_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def incr_in_flight(self) -> None:
+        self.drain_event.clear()
+        self.in_flight += 1
 
     def decr_in_flight(self) -> None:
         """Decrement in_flight count and signal drain_event when empty."""

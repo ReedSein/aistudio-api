@@ -229,10 +229,13 @@ sequenceDiagram
 3. 若为单账号或备用账号全部耗尽时，系统自动对当前账号触发在位强制刷新（In-Place Refresh），清除模板缓存并重新激活会话握手 BotGuard 实现自愈。
 ### 4.4 蓝绿会话平滑热切与就绪门机制 (Blue-Green Session Transition)
 
-针对多账号并发场景，系统实现了无锁化原子就绪门（`SessionReadinessGate`）与蓝绿标签页热切：
-1. **独立新标签页隔离初始化**：当触发账号轮换时，网关在后台并发创建新 CDP 标签页，注入新账号 Cookie，导航至目标子路由 `/u/{auth_user}/` 并完成 WAA 挑战握手；
-2. **原子门禁切换**：握手就绪后，`SessionReadinessGate` 原子切换至新 `SessionContext`，状态置为 `READY`，瞬间放行排队中的新请求；
-3. **旧会话平滑排干 (Drain)**：旧账号上下文移入退休队列，在途流式请求继续在原有标签页中执行；当在途计数归零（`in_flight == 0`）触发 `drain_event` 后，再安全销毁旧标签页 CDP 资源，实现零流式阻断、零请求丢失的热切换。
+针对多账号并发场景，系统使用就绪门（`SessionReadinessGate`）与同一浏览器进程内的独立登录空间：
+
+1. **隔离初始化**：通过 `Target.createBrowserContext` 建立独立 Cookie 存储，再通过 `Target.createTarget.browserContextId` 在其中创建专用页面。只连接返回的目标，不选择第一个标签页，也不清理其他会话的标签页。Cookie 注入、刷新和清理都限定在该登录空间；隔离失败时明确停止。
+2. **就绪与登记一起发布**：页面完成握手后才保存活跃账号选择并打开就绪门；保存失败关闭新空间，保留仍有效的旧会话。排队请求在切换完成后重新取得当前会话，不能切回排队前的账号。
+3. **在途请求排空**：旧会话保持到在途计数归零，再释放整个 BrowserContext。新请求进入时清除旧的排空信号，不以固定 12 秒超时强制销毁仍在使用的页面。主动服务关闭和浏览器崩溃仍可能中断请求。
+
+账号元数据与兼容规则见 [ACCOUNT_METADATA.md](ACCOUNT_METADATA.md)。
 
 
 ### 4.5 准备预算与失败恢复

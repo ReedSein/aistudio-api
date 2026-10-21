@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from aistudio_api.config import (
@@ -162,8 +163,11 @@ class AIStudioClient:
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
         force_refresh_capture: bool = False,
+        on_account: Callable[[str | None, str], None] | None = None,
     ):
-        async with self._session.request_scope():
+        async with self._session.request_scope() as ctx:
+            if on_account is not None:
+                on_account(ctx.account_id, ctx.credential_version)
             captured = await self.capture_request(
                 prompt=capture_prompt,
                 model=model,
@@ -206,8 +210,11 @@ class AIStudioClient:
         max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
+        on_account: Callable[[str | None, str], None] | None = None,
     ) -> ModelOutput:
-        async with self._session.request_scope():
+        async with self._session.request_scope() as ctx:
+            if on_account is not None:
+                on_account(ctx.account_id, ctx.credential_version)
             logger.info("拦截请求: %r", f"{capture_prompt[:20]}...")
             captured = await self.capture_request(
                 prompt=capture_prompt,

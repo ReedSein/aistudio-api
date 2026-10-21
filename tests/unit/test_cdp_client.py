@@ -232,8 +232,8 @@ async def test_cdp_connection_liveness_checker_fail_fast():
 
 
 @pytest.mark.asyncio
-async def test_cdp_client_connect_page_success_and_prune():
-    """Verify connect_page connects to main page and prunes extra spare pages."""
+async def test_cdp_client_connects_only_the_owned_isolated_target():
+    """Never attach to or close another session's first/spare tab."""
     from aistudio_api.infrastructure.browser.cdp_client import CDPClient
 
     client = CDPClient(port=9222)
@@ -244,6 +244,11 @@ async def test_cdp_client_connect_page_success_and_prune():
         {"id": "t2", "type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/p2"},
     ]
     client.get_targets = AsyncMock(return_value=fake_targets)
+    browser = MagicMock(spec=CDPConnection)
+    browser.send = AsyncMock(
+        side_effect=[{"browserContextId": "isolated"}, {"targetId": "t2"}]
+    )
+    client._browser = browser
 
     with patch(
         "aistudio_api.infrastructure.browser.cdp_client.CDPConnection"
@@ -256,5 +261,25 @@ async def test_cdp_client_connect_page_success_and_prune():
             "aistudio_api.infrastructure.browser.cdp_client.CDPPage.init_domains",
             new_callable=AsyncMock,
         ):
-            page = await client.connect_page(block_assets=True)
-            assert page.target_id == "t1"
+            page = await client.create_new_page(block_assets=True)
+            assert page.target_id == "t2"
+            assert page.browser_context_id == "isolated"
+            assert browser.send.call_args.args == (
+                "Target.createTarget",
+                {"url": "about:blank", "browserContextId": "isolated"},
+            )
+
+
+@pytest.mark.asyncio
+async def test_context_creation_failure_never_falls_back_to_default_cookie_store():
+    from aistudio_api.infrastructure.browser.cdp_client import CDPClient
+
+    client = CDPClient(9222)
+    client._browser = MagicMock(spec=CDPConnection)
+    client._browser.send = AsyncMock(
+        side_effect=RuntimeError("fixture unsupported isolation")
+    )
+    client.get_targets = AsyncMock()
+    with pytest.raises(RuntimeError, match="unsupported isolation"):
+        await client.create_new_page()
+    client.get_targets.assert_not_called()

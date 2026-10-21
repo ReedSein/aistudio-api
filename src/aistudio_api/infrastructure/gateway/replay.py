@@ -34,4 +34,5 @@ class RequestReplayService:
             timeout_ms=timeout * 1000,
             url=captured.url,
             headers=headers,
+            context=captured.context,
         )

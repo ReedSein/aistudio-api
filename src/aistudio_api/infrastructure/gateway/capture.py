@@ -9,6 +9,7 @@ from aistudio_api.config import DEFAULT_TEXT_MODEL
 from aistudio_api.infrastructure.diagnostics.redaction import REDACTED, sanitized_json
 from aistudio_api.infrastructure.diagnostics.store import get_store
 from aistudio_api.infrastructure.gateway.session import BrowserSession
+from aistudio_api.infrastructure.gateway.session_state import SessionContext
 from aistudio_api.infrastructure.gateway.wire_codec import modify_body
 from aistudio_api.infrastructure.gateway.wire_spec import TopLevelIndex
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
@@ -24,6 +25,7 @@ class CapturedRequest:
     body: str
     model: str = ""
     snapshot: str = ""
+    context: SessionContext | None = None
 
 
 class RequestCaptureService:
@@ -60,17 +62,17 @@ class RequestCaptureService:
         force_refresh: bool = False,
     ) -> CapturedRequest | None:
         # 先经就绪门等待：预热/切号完成前不能捕获模板，否则占位模板会在解码时越界（冷启动竞态）
-        await self._session.ensure_ready()
+        ctx = await self._session.ensure_ready()
         if force_refresh:
             self._templates.pop(model, None)
-        template = await self._ensure_template(model)
+        template = await self._ensure_template(model, ctx)
         rewritten_contents = contents
         snapshot_contents = rewritten_contents or [
             AistudioContent.from_user_prompt(prompt=prompt, images=images)
         ]
 
         # 签名是一次性的票据（根据请求内容穿进 snapshot 计算），每次请求实时生成，不可复用缓存
-        snapshot = await self._session.generate_snapshot(snapshot_contents)
+        snapshot = await self._session.generate_snapshot(snapshot_contents, context=ctx)
 
         body = modify_body(
             template.body,
@@ -97,6 +99,7 @@ class RequestCaptureService:
             body=body,
             model=model,
             snapshot=snapshot,
+            context=ctx,
         )
         import json
 
@@ -116,21 +119,21 @@ class RequestCaptureService:
         )
         return captured
 
-    async def _ensure_template(self, model: str) -> CapturedRequest:
-        ctx = self._session.active_context
-        ctx_id = ctx.context_id if ctx else None
-        if self._active_ctx_id != ctx_id:
-            self._templates.clear()
-            self._active_ctx_id = ctx_id
-
-        if model in self._templates:
+    async def _ensure_template(
+        self, model: str, ctx: SessionContext
+    ) -> CapturedRequest:
+        ctx_id = ctx.context_id
+        if self._active_ctx_id == ctx_id and model in self._templates:
             return self._templates[model]
 
         async with self._lock:
+            if self._active_ctx_id != ctx_id:
+                self._templates.clear()
+                self._active_ctx_id = ctx_id
             if model in self._templates:
                 return self._templates[model]
 
-            captured = await self._session.capture_template(model)
+            captured = await self._session.capture_template(model, context=ctx)
             headers_dict = captured.get("headers")
             headers = {
                 str(k): str(v)

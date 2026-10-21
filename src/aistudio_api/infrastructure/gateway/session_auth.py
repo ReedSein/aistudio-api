@@ -9,6 +9,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from aistudio_api.domain.errors import SessionExpiredError
+from aistudio_api.infrastructure.account.account_store import (
+    AccountMeta,
+    _atomic_write_json,
+)
 from aistudio_api.infrastructure.browser.cdp_client import CDPPage
 from aistudio_api.infrastructure.browser.scripts import (
     CHECK_IDENTITY_JS,
@@ -89,9 +93,8 @@ async def load_cookies_to_page(page: CDPPage, auth_file: str | None) -> bool:
     if not auth_file or not Path(auth_file).is_file():
         return False
     try:
-        with suppress(Exception):
-            await page.cdp.send("Network.clearBrowserCookies")
-            await page.cdp.send("Network.clearBrowserCache")
+        await page.clear_cookies()
+        await page.cdp.send("Network.clearBrowserCache")
 
         data = json.loads(Path(auth_file).read_text(encoding="utf-8"))
         cookies = data.get("cookies") or []
@@ -118,7 +121,7 @@ async def load_cookies_to_page(page: CDPPage, auth_file: str | None) -> bool:
         )
         return True
     except Exception as e:
-        log.warning("向页面注入 Cookie 失败: %s", e)
+        log.warning("向页面注入 Cookie 失败: %s", type(e).__name__)
         return False
 
 
@@ -135,17 +138,21 @@ async def extract_account_email(page: CDPPage | None) -> str | None:
     return None
 
 
-async def verify_account_identity(page: CDPPage, auth_file: str | None) -> bool:
+async def verify_account_identity(
+    page: CDPPage, auth_file: str | None, *, account: AccountMeta | None = None
+) -> bool:
     """Verify currently loaded account matches metadata in auth_file."""
     if not auth_file:
         return True
-    meta_path = Path(auth_file).parent / "meta.json"
-    if not meta_path.exists():
-        return True
-    try:
+    if account is not None:
+        meta = account.to_dict()
+    else:
+        meta_path = Path(auth_file).parent / "meta.json"
+        if not meta_path.exists():
+            return True
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except Exception:
-        return True
+        if not isinstance(meta, dict):
+            raise ValueError("Invalid legacy account metadata")
 
     account_id = meta.get("id", "unknown")
     auth_user = str(meta.get("auth_user") or "0")
@@ -157,7 +164,7 @@ async def verify_account_identity(page: CDPPage, auth_file: str | None) -> bool:
         else ("/u/0/" in curr_url or "/u/" not in curr_url)
     )
 
-    expected_email = (meta.get("email") or "").strip().lower()
+    expected_email = str(meta.get("email") or "").strip().lower()
     discovered_email: str | None = None
 
     if not expected_email and is_on_correct_user:
@@ -169,12 +176,6 @@ async def verify_account_identity(page: CDPPage, auth_file: str | None) -> bool:
                 auth_user,
                 mask_email(discovered_email),
             )
-            meta["email"] = discovered_email
-            with suppress(Exception):
-                meta_path.write_text(
-                    json.dumps(meta, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
             expected_email = discovered_email.strip().lower()
 
     if not expected_email:
@@ -194,8 +195,8 @@ async def verify_account_identity(page: CDPPage, auth_file: str | None) -> bool:
     ):
         log.warning(
             "[account-guard] 页面检测到不同账号 %s (期望 %s, acc_id=%s, u/%s, url=%s)，跳过本次 Cookie 回写以防覆盖",
-            discovered_email,
-            expected_email,
+            mask_email(discovered_email),
+            mask_email(expected_email),
             account_id,
             auth_user,
             curr_url,
@@ -245,10 +246,7 @@ async def save_browser_cookies(
                 existing = json.loads(auth_path.read_text(encoding="utf-8"))
                 origins = existing.get("origins", [])
         auth_path.parent.mkdir(parents=True, exist_ok=True)
-        auth_path.write_text(
-            json.dumps({"cookies": current_cookies, "origins": origins}, indent=2),
-            encoding="utf-8",
-        )
+        _atomic_write_json(auth_path, {"cookies": current_cookies, "origins": origins})
         log.info("已保存 %d 个 Cookie 至 %s", len(current_cookies), auth_file)
     except Exception as e:
         log.debug("保存 Cookie 失败: %s", e)

@@ -296,9 +296,12 @@ class CDPConnection:
 
 
 class CDPPage:
-    def __init__(self, cdp: CDPConnection, target_id: str):
+    def __init__(
+        self, cdp: CDPConnection, target_id: str, browser_context_id: str | None = None
+    ):
         self.cdp = cdp
         self.target_id = target_id
+        self.browser_context_id = browser_context_id
         self._is_closed = False
         self._last_url: str = ""
         self._unsubscribers: list[Callable[[], None]] = []
@@ -722,12 +725,9 @@ class CDPPage:
         }
 
     async def clear_cookies(self) -> None:
-        """Clear all browser cookies."""
+        """Clear this page's login space; protocol failures must remain visible."""
         self._cached_cookies = None
-        try:
-            await self.cdp.send("Network.clearBrowserCookies")
-        except Exception as e:
-            log.debug("清除浏览器 Cookie 失败: %s", e)
+        await self.cdp.send("Network.clearBrowserCookies")
 
     def on_request(
         self, callback: Callable[[dict[str, object]], object]
@@ -919,7 +919,9 @@ class CDPClient:
         self.port = port
         self.host = host
         self.base_url = f"http://{host}:{port}"
-        self.page: CDPPage | None = None
+        self._browser: CDPConnection | None = None
+        self._browser_lock = asyncio.Lock()
+        self._pages: dict[str, CDPPage] = {}
 
     async def get_version(self) -> dict[str, object]:
         """Fetch /json/version info."""
@@ -959,84 +961,81 @@ class CDPClient:
             f"Chromium CDP endpoint on port {self.port} not ready after {timeout_s}s: {last_err}"
         )
 
-    async def connect_page(self, block_assets: bool = True) -> CDPPage:
-        """Connect to an existing page target or create one with auto-retry on transient drops."""
-        await self.wait_until_ready()
-        last_exc: Exception | None = None
-        for attempt in range(3):
-            try:
-                targets = await self.get_targets()
-                page_targets = [
-                    t
-                    for t in targets
-                    if t.get("type") == "page" and t.get("webSocketDebuggerUrl")
-                ]
-                page_target = None
-                if page_targets:
-                    page_target = page_targets[0]
-                    # Prune any spare about:blank or crashed tabs to save ~50MB RAM each
-                    for spare in page_targets[1:]:
-                        spare_id = str(spare.get("id") or "")
-                        if spare_id:
-                            with contextlib.suppress(Exception):
-                                async with httpx.AsyncClient(timeout=2.0) as client:
-                                    await client.put(
-                                        f"{self.base_url}/json/close/{spare_id}"
-                                    )
-                if not page_target:
-                    async with httpx.AsyncClient(timeout=5.0) as client:
-                        resp = await client.put(f"{self.base_url}/json/new")
-                        resp.raise_for_status()
-                        page_target = resp.json()
-
-                ws_url = str(page_target.get("webSocketDebuggerUrl") or "")
-                target_id = str(page_target.get("id") or "")
-
-                conn = CDPConnection(ws_url)
-                await conn.connect()
-
-                page = CDPPage(conn, target_id)
-                await page.init_domains(block_assets=block_assets)
-                self.page = page
-                return page
-            except Exception as e:
-                last_exc = e
-                log.debug("连接页面第 %d 次尝试失败: %s", attempt + 1, e)
-                if attempt < 2:
-                    await asyncio.sleep(0.3)
-        raise RuntimeError(
-            f"Failed to connect page target after 3 attempts: {last_exc}"
-        ) from last_exc
+    async def _browser_connection(self) -> CDPConnection:
+        async with self._browser_lock:
+            if self._browser is None:
+                version = await self.get_version()
+                ws_url = version.get("webSocketDebuggerUrl")
+                if not isinstance(ws_url, str) or not ws_url:
+                    raise RuntimeError("Browser CDP endpoint is missing")
+                connection = CDPConnection(ws_url)
+                try:
+                    await connection.connect()
+                except BaseException:
+                    await connection.close()
+                    raise
+                self._browser = connection
+            return self._browser
 
     async def create_new_page(self, block_assets: bool = True) -> CDPPage:
-        """Create a dedicated new tab target and connect CDP Page to it."""
-        await self.wait_until_ready()
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.put(f"{self.base_url}/json/new")
-            resp.raise_for_status()
-            page_target = resp.json()
-
-        ws_url = str(page_target.get("webSocketDebuggerUrl") or "")
-        target_id = str(page_target.get("id") or "")
-        conn = CDPConnection(ws_url)
+        """Create a page in a new, isolated Cookie store; never use a spare tab."""
+        browser = await self._browser_connection()
+        result = await browser.send(
+            "Target.createBrowserContext", {"disposeOnDetach": True}
+        )
+        context_id = result.get("browserContextId")
+        if not isinstance(context_id, str) or not context_id:
+            raise RuntimeError("Browser did not create an isolated context")
+        conn: CDPConnection | None = None
         try:
+            result = await browser.send(
+                "Target.createTarget",
+                {"url": "about:blank", "browserContextId": context_id},
+            )
+            target_id = result.get("targetId")
+            if not isinstance(target_id, str) or not target_id:
+                raise RuntimeError("Browser did not create an owned page")
+            targets = await self.get_targets()
+            target = next((t for t in targets if t.get("id") == target_id), None)
+            if target is None or not isinstance(
+                target.get("webSocketDebuggerUrl"), str
+            ):
+                raise RuntimeError("Owned page CDP endpoint is missing")
+            conn = CDPConnection(str(target["webSocketDebuggerUrl"]))
             await conn.connect()
-            page = CDPPage(conn, target_id)
+            page = CDPPage(conn, target_id, context_id)
             await page.init_domains(block_assets=block_assets)
+            self._pages[target_id] = page
             return page
-        except Exception:
-            await conn.close()
-            await self.close_target(target_id)
+        except BaseException:
+            if conn is not None:
+                await conn.close()
+            await browser.send(
+                "Target.disposeBrowserContext", {"browserContextId": context_id}
+            )
             raise
 
-    async def close_target(self, target_id: str) -> None:
-        """Close a specific target ID via /json/close/{target_id}."""
-        with contextlib.suppress(Exception):
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                await client.put(f"{self.base_url}/json/close/{target_id}")
+    async def close_page(self, page: CDPPage) -> None:
+        """Release only the login space owned by this page."""
+        self._pages.pop(page.target_id, None)
+        try:
+            await page.close()
+        finally:
+            if page.browser_context_id and self._browser is not None:
+                await self._browser.send(
+                    "Target.disposeBrowserContext",
+                    {"browserContextId": page.browser_context_id},
+                )
 
     async def close(self) -> None:
-        """Close active page and release resources."""
-        if self.page:
-            await self.page.close()
-            self.page = None
+        """Release owned contexts and the browser connection."""
+        try:
+            for page in list(self._pages.values()):
+                try:
+                    await self.close_page(page)
+                except Exception as exc:
+                    log.warning("关闭浏览器登录空间失败: %s", type(exc).__name__)
+        finally:
+            if self._browser is not None:
+                await self._browser.close()
+                self._browser = None

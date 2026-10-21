@@ -704,6 +704,16 @@ class AccountRotator:
 
         self.save_state()
 
+    def reset_auth_state(self, account_id: str) -> None:
+        """Reimport unlocks authentication only; model quotas and counters survive."""
+        stats = self._stats.get(account_id)
+        if stats is not None:
+            stats.auth_cooldown = 0.0
+            stats.auth_errors = 0
+            stats.session_expired = False
+            stats.last_session_expired = 0.0
+            self.save_state()
+
     def remove_account(self, account_id: str) -> None:
         self._stats.pop(account_id, None)
 

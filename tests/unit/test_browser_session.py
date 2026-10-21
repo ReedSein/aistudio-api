@@ -320,8 +320,12 @@ async def test_account_service_activate_account_warms_up_browser():
 
     assert result is not None
     assert result.id == "acc_1"
-    mock_session.switch_auth.assert_called_once_with("/data/accounts/acc_1/auth.json")
-    mock_session.ensure_botguard_service.assert_called_once()
+    args = mock_session.switch_auth.call_args
+    assert args.args == ("/data/accounts/acc_1/auth.json",)
+    mock_store.set_active_account.assert_not_called()
+    args.kwargs["publish"]()
+    mock_store.set_active_account.assert_called_once_with("acc_1", expected_version="")
+    mock_session.ensure_botguard_service.assert_not_called()
 
 
 @pytest.mark.asyncio

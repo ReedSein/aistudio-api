@@ -34,6 +34,7 @@ async def try_switch_account(
     *,
     is_auth_error: bool = False,
     is_session_expired: bool = False,
+    failed_credential_version: str | None = None,
 ) -> bool:
     """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。"""
     global _last_switch_time
@@ -70,6 +71,14 @@ async def try_switch_account(
 
         current_active = account_service.get_active_account()
         current_id = current_active.id if current_active else None
+
+        if failed_account_id and failed_credential_version is not None:
+            failed_account = account_service.get_account(failed_account_id)
+            if (
+                failed_account is None
+                or failed_account.credential_version != failed_credential_version
+            ):
+                return True
 
         # 双重检查 1：如果已有并发协程在 entry_time 之后完成切号或在位自愈刷新，且当前账号对该模型可用，则直接复用
         if (
@@ -125,7 +134,7 @@ async def try_switch_account(
                 client.session,
             )
             if result is not None:
-                rotator.clear_cooldown(next_account.id, model=model)
+                rotator.reset_auth_state(next_account.id)
                 _last_switch_time = time.time()
             return result is not None
         # 登录态失效严禁在原账号原地重试
@@ -147,7 +156,7 @@ async def try_switch_account(
                 client.session,
             )
             if result is not None:
-                rotator.clear_cooldown(current_id, model=model)
+                rotator.reset_auth_state(current_id)
                 _last_switch_time = time.time()
             return result is not None
         return bool(
@@ -176,11 +185,20 @@ def record_rotator_event(
     model: str | None = None,
     *,
     scope: str = "unknown",
+    account_id: str | None = None,
 ) -> None:
     """记录调度器事件（成功、限流、错误、鉴权异常）。"""
     rotator = runtime_state.rotator
     account_service = runtime_state.account_service
-    account = account_service.get_active_account() if account_service else None
+    account = (
+        (
+            account_service.get_account(account_id)
+            if account_id
+            else account_service.get_active_account()
+        )
+        if account_service
+        else None
+    )
     if not rotator or account is None:
         return
     if event == "success":

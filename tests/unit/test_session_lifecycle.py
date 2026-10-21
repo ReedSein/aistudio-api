@@ -24,7 +24,7 @@ async def test_session_hot_cookie_switching(tmp_path):
     page = MagicMock(spec=CDPPage)
     page.is_closed = MagicMock(return_value=False)
     mock_cdp = MagicMock(spec=CDPClient)
-    mock_cdp.connect_page = AsyncMock(return_value=page)
+    mock_cdp.create_new_page = AsyncMock(return_value=page)
     session._cdp_client = mock_cdp
 
     session._close_internal = AsyncMock()
@@ -99,6 +99,7 @@ async def test_session_template_capture_universal_bootstrap():
     """Verify template capture universally uses bootstrap template to prevent DOM GC timeout."""
     session = BrowserSession(port=9222)
     mock_page = MagicMock(spec=CDPPage)
+    mock_page.is_closed.return_value = False
     session.set_ready_context(
         SessionContext(
             page=mock_page,

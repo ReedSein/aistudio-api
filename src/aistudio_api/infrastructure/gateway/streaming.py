@@ -103,6 +103,7 @@ class StreamingGateway:
             timeout_ms=settings.timeout_stream * 1000,
             url=captured.url if captured else None,
             headers=captured.headers if captured else None,
+            context=captured.context,
         ):
             if event_type == "status" and payload and not status_code:
                 status_code = int(str(payload))

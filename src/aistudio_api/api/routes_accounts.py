@@ -158,7 +158,7 @@ async def detect_account_email(
 
     target_auth = account_service.get_account_auth_path(account_id)
     if target_auth and str(target_auth) != browser_session._auth_file:
-        await browser_session.switch_auth(str(target_auth))
+        await account_service.activate_account(account_id, browser_session)
 
     email = await browser_session.extract_account_email()
     if email:
@@ -194,12 +194,8 @@ async def delete_account(
             runtime_state.client._session if runtime_state.client else None
         )
         if new_active is not None:
-            account_service.set_active_account(new_active.id)
             if browser_session is not None:
-                new_auth_path = account_service.get_account_auth_path(new_active.id)
-                await browser_session.switch_auth(
-                    str(new_auth_path) if new_auth_path else None
-                )
+                await account_service.activate_account(new_active.id, browser_session)
         else:
             if browser_session is not None:
                 await browser_session.switch_auth(None)
@@ -240,12 +236,8 @@ async def delete_cookie_group(
             runtime_state.client._session if runtime_state.client else None
         )
         if new_active is not None:
-            account_service.set_active_account(new_active.id)
             if browser_session is not None:
-                new_auth_path = account_service.get_account_auth_path(new_active.id)
-                await browser_session.switch_auth(
-                    str(new_auth_path) if new_auth_path else None
-                )
+                await account_service.activate_account(new_active.id, browser_session)
         else:
             if browser_session is not None:
                 await browser_session.switch_auth(None)

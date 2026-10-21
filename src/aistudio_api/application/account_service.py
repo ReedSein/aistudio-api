@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from aistudio_api.application.account_rotator import AccountRotator
     from aistudio_api.infrastructure.account.account_store import (
         AccountMeta,
         AccountStore,
@@ -23,8 +25,11 @@ class AccountService:
     def __init__(
         self,
         account_store: AccountStore,
+        rotator: AccountRotator | None = None,
     ) -> None:
         self._store = account_store
+        self._rotator = rotator
+        self._activation_lock = asyncio.Lock()
 
     def list_accounts(self) -> list[AccountMeta]:
         """列出所有账号。"""
@@ -57,10 +62,13 @@ class AccountService:
             logger.error("账号 %s 的账号目录不存在", account_id)
             return None
 
-        self._store.set_active_account(account_id)
-        logger.info("已切换活跃账号持久化状态: %s", account_id)
-        await browser_session.switch_auth(str(auth_path))
-        await browser_session.ensure_botguard_service()
+        async with self._activation_lock:
+            await browser_session.switch_auth(
+                str(auth_path),
+                publish=lambda: self._store.set_active_account(
+                    account_id, expected_version=account.credential_version
+                ),
+            )
         logger.info("已切换到账号: %s (%s)", account_id, account.name)
         return account
 
@@ -87,7 +95,7 @@ class AccountService:
         cookie_id: str | None = None,
     ) -> AccountMeta:
         """从 Cookie 存储状态保存新账号。"""
-        return self._store.save_account(
+        account = self._store.save_account(
             name=name,
             email=email,
             storage_state=storage_state,
@@ -95,6 +103,10 @@ class AccountService:
             auth_user=auth_user,
             cookie_id=cookie_id,
         )
+        if self._rotator is not None:
+            self._rotator.add_account(account.id)
+            self._rotator.reset_auth_state(account.id)
+        return account
 
     def batch_import_accounts(
         self,
@@ -117,7 +129,7 @@ class AccountService:
                     else prefix
                 )
                 diagnostics.emit("account_import_save_item", index=index)
-                account = self._store.save_account(
+                account = self.save_account_from_cookies(
                     name=acc_name,
                     email=None,
                     storage_state=storage_state,

@@ -26,29 +26,6 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 logger = get_logger("transport")
 
 
-def _get_active_auth_cookies() -> dict[str, str] | None:
-    """从当前活跃账号的 auth.json 读取凭据 Cookie 作为本地高速兜底。"""
-    try:
-        from aistudio_api.infrastructure.account.account_store import AccountStore
-
-        store = AccountStore()
-        active = store.get_active_account()
-        if not active:
-            return None
-        auth_path = store.get_auth_path_optional(active.id, require_exists=True)
-        if auth_path and auth_path.is_file():
-            data = json.loads(auth_path.read_text(encoding="utf-8"))
-            cookies = data.get("cookies") or []
-            return {
-                str(c.get("name") or ""): str(c.get("value") or "")
-                for c in cookies
-                if c.get("name")
-            }
-    except Exception:
-        pass
-    return None
-
-
 async def _ensure_authorization_header(
     page: CDPPage, headers: dict[str, str], auth_user: str = "0"
 ) -> dict[str, str]:
@@ -73,12 +50,6 @@ async def _ensure_authorization_header(
         with suppress(Exception):
             await page.get_cookies()
             cookie_dict = getattr(page, "_cached_cookies", None)
-    # 2. 如果 CDP 出现超时波动或未取到 SAPISID，回退读取活跃账号 auth.json 凭据
-    if not cookie_dict or not any("SAPISID" in k for k in cookie_dict):
-        disk_cookies = _get_active_auth_cookies()
-        if disk_cookies and any("SAPISID" in k for k in disk_cookies):
-            cookie_dict = disk_cookies
-            page._cached_cookies = cookie_dict
     fresh_auth = calculate_sapisid_hash(cookie_dict) if cookie_dict else ""
     if fresh_auth:
         clean_headers["Authorization"] = fresh_auth

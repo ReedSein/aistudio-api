@@ -38,7 +38,8 @@ async def test_capture_service_concurrency_and_caching():
 
     call_count = 0
 
-    async def fake_capture_template(model: str):
+    async def fake_capture_template(model: str, *, context):
+        assert context is await mock_session.ensure_ready()
         nonlocal call_count
         call_count += 1
         await asyncio.sleep(0.001)
@@ -80,7 +81,8 @@ async def test_capture_service_ephemeral_signature_identical_prompts():
     mock_session.ensure_ready = AsyncMock()
     snap_counter = 0
 
-    async def fake_snapshot(contents):
+    async def fake_snapshot(contents, *, context):
+        assert context is await mock_session.ensure_ready()
         nonlocal snap_counter
         snap_counter += 1
         return f"!snap_token_{snap_counter}"
@@ -584,9 +586,12 @@ async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery
     mock_rotator.record_auth_error.side_effect = lambda acc_id, model=None: (
         stats.record_auth_error(model)
     )
-    mock_rotator.clear_cooldown.side_effect = lambda acc_id, model=None: (
-        stats.clear_cooldown(model)
-    )
+
+    def reset_auth(acc_id):
+        stats.auth_cooldown = 0.0
+        stats.auth_errors = 0
+
+    mock_rotator.reset_auth_state.side_effect = reset_auth
 
     activate_count = 0
 
@@ -616,6 +621,7 @@ async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery
         assert all(results)
         # 1. 防雪崩：在位自愈只应当执行 1 次实质性的 activate_account 调用
         assert activate_count == 1
+        mock_rotator.clear_cooldown.assert_not_called()
         # 2. 自愈成功后，必须清除账号的 auth_cooldown，使账号立即恢复健康可用，杜绝并发下后续请求直接 403
         assert stats.is_available("gemini-3.8-flash")
         assert stats.auth_cooldown == 0.0
